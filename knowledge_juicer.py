@@ -3,322 +3,308 @@ import fitz  # PyMuPDF
 import dashscope
 from dashscope.api_entities.dashscope_response import Role
 import base64
+import streamlit.components.v1 as components
 
 # =========================================================
-# [配置层] 全局设置与状态初始化
+# [配置层] 全局设置
 # =========================================================
-st.set_page_config(page_title="榨知机 V1.2", page_icon="🍋", layout="wide")
+st.set_page_config(page_title="榨知机 V1.3", page_icon="🍋", layout="wide")
 
-# 初始化 Session State (会话状态)
-# knowledge_base: 存储 AI 生成的最终复习讲义
-# messages: 存储与 AI 助教的对话历史
-if "knowledge_base" not in st.session_state:
-    st.session_state.knowledge_base = ""
+# 初始化状态
+if "result_content" not in st.session_state:
+    st.session_state.result_content = ""    # 存储生成的讲义/试卷
+if "mindmap_code" not in st.session_state:
+    st.session_state.mindmap_code = ""      # 存储思维导图代码
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    st.session_state.messages = []          # 聊天记录
+if "last_socratic_question" not in st.session_state:
+    st.session_state.last_socratic_question = None # 记录上一道苏格拉底题目
 
 # =========================================================
-# [逻辑层] 核心技术函数库
+# [工具层] 
 # =========================================================
 
 def extract_text_from_pdf(file_bytes):
-    """
-    [基础功能] 从 PDF 文件流中提取纯文本。
-    适用场景：普通的文字版 PDF 教材/课件。
-    """
     doc = fitz.open(stream=file_bytes, filetype="pdf")
     text = ""
-    for page in doc:
-        text += page.get_text()
+    for page in doc: text += page.get_text()
     doc.close()
     return text
 
 def pdf_pages_to_base64_images(file_bytes, max_pages=5):
-    """
-    [多模态预处理] 将 PDF 页面转换为图片流 (Base64)。
-    
-    参数:
-        max_pages (int): 为了平衡 Token 消耗与响应速度，默认仅截取前 5 页进行视觉分析。
-        (通常前几页包含了目录或核心大纲)
-    """
     doc = fitz.open(stream=file_bytes, filetype="pdf")
-    images_base64 = []
-    
-    target_pages = min(len(doc), max_pages)
-    
-    for i in range(target_pages):
+    images = []
+    for i in range(min(len(doc), max_pages)):
         page = doc.load_page(i)
-        # dpi=72 是为了降低图片分辨率，减少 Token 消耗，同时足够 AI 识别文字
-        pix = page.get_pixmap(dpi=72) 
-        img_data = pix.tobytes("png")
-        base64_str = base64.b64encode(img_data).decode("utf-8")
-        images_base64.append(f"data:image/png;base64,{base64_str}")
-        
+        pix = page.get_pixmap(dpi=72)
+        b64 = base64.b64encode(pix.tobytes("png")).decode("utf-8")
+        images.append(f"data:image/png;base64,{b64}")
     doc.close()
-    return images_base64
+    return images
+
+def get_download_html(content, title="复习资料"):
+    """生成 HTML 下载链接"""
+    b64 = base64.b64encode(content.encode()).decode()
+    return f'<a href="data:text/html;base64,{b64}" download="{title}.html">📥 点击下载完整讲义 (HTML版/可打印PDF)</a><br><small>💡 推荐复制内容到 Notion 或 Obsidian 查看最佳效果</small>'
+
+def render_markmap(markdown_content):
+    """渲染思维导图"""
+    markmap_html = f"""
+    <!DOCTYPE html>
+    <style>svg {{ width: 100%; height: 600px; background: white; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }}</style>
+    <script src="https://cdn.jsdelivr.net/npm/d3@6"></script>
+    <script src="https://cdn.jsdelivr.net/npm/markmap-view@0.14.4"></script>
+    <div id="markmap"></div>
+    <script>
+        const markdown = `{markdown_content.replace('`', '\`')}`;
+        const transformer = new markmap.Transformer();
+        const {{ root, features }} = transformer.transform(markdown);
+        markmap.Markmap.create('#markmap', null, root);
+    </script>
+    """
+    components.html(markmap_html, height=600)
+
+# =========================================================
+# [模型层 - 核心生成]
+# =========================================================
 
 def call_qwen_vl_vision(images, api_key):
-    """
-    [视觉模型] 调用 Qwen-VL-Max 进行图像理解。
-    功能：当检测到 PDF 文字过少（疑似扫描件/PPT）时触发，提取图片中的知识点。
-    """
-    # 容错处理：清洗 Key 中的中文符号
+    """视觉模型"""
+    dashscope.api_key = api_key.strip().replace("：", "").replace(":", "")
+    content = [{"text": "你是大学助教。请详细分析这些 PPT/课件截图，提取里面的所有核心知识点、文字内容和图表含义，输出为详细的文本笔记。"}] + [{"image": img} for img in images]
+    try:
+        resp = dashscope.MultiModalConversation.call(model='qwen-vl-max', messages=[{"role":"user","content":content}])
+        return resp.output.choices[0]['message']['content'][0]['text'] if resp.status_code==200 else ""
+    except: return ""
+
+def call_qwen_speedrun(main_text, exam_text, api_key):
+    """【模式A：0基础】Prompt 2 定制版"""
     dashscope.api_key = api_key.strip().replace("：", "").replace(":", "")
     
-    # 构造 Qwen-VL 专用的多模态消息格式
-    content_list = [{"text": "你是大学助教。请详细分析这些 PPT/课件截图，提取里面的所有核心知识点、文字内容和图表含义，输出为详细的文本笔记。"}]
-    for img in images:
-        content_list.append({"image": img})
-        
-    messages = [
-        {
-            "role": "user",
-            "content": content_list
-        }
-    ]
-
-    try:
-        response = dashscope.MultiModalConversation.call(
-            model='qwen-vl-max', 
-            messages=messages,
-            result_format='message',
-        )
-        if response.status_code == 200:
-            return response.output.choices[0]['message']['content'][0]['text']
-        else:
-            return f"[视觉识别失败] Code: {response.code}"
-    except Exception as e:
-        return f"[视觉系统错误] {str(e)}"
-
-def call_qwen_summary_v1_2(main_content, exam_content, api_key):
-    """
-    [核心大脑] 调用 Qwen-Plus 生成结构化讲义 (V1.2版)。
-    特性：
-    1. 提示词工程：强制 Markdown 排版。
-    2. 上下文学习：结合真题 (exam_content) 进行加权分析。
-    """
-    # 容错处理
-    dashscope.api_key = api_key.strip().replace("：", "").replace(":", "")
-
-    # 动态构建指令：如果存在真题，插入最高优先级指令
-    exam_instruction = ""
-    if exam_content:
-        exam_instruction = f"""
-        【⚠️ 真题锚定模式已开启】：
-        下方提供了【真题参考】。请仔细分析其出题风格。
-        在生成讲义时，如果遇到真题里的知识点，必须使用“⭐”图标高亮，并引用真题原题作为例证。
-        """
-
-    # System Prompt：定义 AI 的人设与输出规范
+    exam_instruction = "【⚠️ 真题锚定】：请用“⭐”标记真题考点。" if exam_text else ""
+    
     system_prompt = f"""
-    你是一位**追求极致排版**的大学金牌助教。请整理一份结构清晰、阅读体验极佳的期末复习讲义。
+    你是一位金牌大学助教。请为“0基础”学生生成一份全能复习包。
     {exam_instruction}
-    
-    【排版严格要求】：
-    1. **层级分明**：主标题用 # (H1)，模块标题用 ## (H2)，子知识点用 ### (H3)。
-    2. **视觉优化**：
-       - 核心定义必须**加粗**。
-       - 使用 Emoji 图标（如 🎯, 💡, ⚡, 📝）区分不同板块。
-       - 关键公式请使用 LaTeX 格式（如 $E=mc^2$）。
-    3. **列表规范**：使用无序列表 (-) 展示细节，段落之间保留空行。
-    4. **分隔线**：不同大板块之间使用 `---` 分隔线。
 
-    【目标输出结构】：
-    # 📘 [课程名称] 期末突击讲义
-    
-    ## 🎯 核心概念深度解析
-    （此处解释名词、原理，配合通俗例子）
-    
-    ## ⭐ 真题/高频考点映射
-    （此处列出真题里考过的点，标注出题年份或类型）
-    
-    ## 🧠 必背记忆清单
-    （此处列出死记硬背的公式、年代，建议用表格形式展示）
-    
-    ## 📝 模拟押题 (含解析)
-    （基于真题风格，出3套模拟题：单选/多选/简答/论述。每套题100分，符合中国大学期末风格，题目与答案分离展示。）
+    【输出结构要求】：
+    请严格按照以下4个部分输出，不要废话：
+
+    ## part1_mindmap
+    （请生成一段 Markdown 格式的思维导图代码，不要用代码块包裹，直接写层级，例如：# 核心主题 ## 分支1 ### 叶子节点）
+
+    ## part2_concepts
+    # 📘 核心知识清单
+    （解释名词、原理。关键步骤：提取讲义中所有的具体知识点，确保不重不漏，并根据每一个知识点联想1个经典或最新的实际案例/应用场景来辅助解释这些概念，以弥补课件的枯燥。）
+
+    ## part3_memory
+    # 🧠 必背清单
+    （筛选出你觉得应该必须记住的必背知识，例如历史课上的大事件发生的年份，政治课上的某个思想的具体含义。身为大学助教的你非常清楚什么是应该背的。）
+
+    ## part4_exam
+    # 📝 模拟真题
+    （一套模拟题，包含：10道单项选择 + 5个多选 + 5个判断 + 2道简答 + 2个案例分析/综合/论述/计算题。含答案，但答案要和题分开展示。）
     """
-
-    # 拼接用户输入：课件摘要 + 真题参考
-    user_content = f"【课件内容摘要】：\n{main_content[:15000]}\n\n"
-    if exam_content:
-        user_content += f"【真题参考】：\n{exam_content[:5000]}"
-
-    messages = [
-        {'role': Role.SYSTEM, 'content': system_prompt},
-        {'role': Role.USER, 'content': user_content}
-    ]
-
+    
+    user_content = f"课件：\n{main_text[:12000]}\n\n真题：\n{exam_text[:3000]}"
     try:
-        response = dashscope.Generation.call(
-            model='qwen-plus', 
-            messages=messages,
-            result_format='message',
-        )
-        if response.status_code == 200:
-            return response.output.choices[0]['message']['content']
-        else:
-            return f"❌ 讲义生成失败: {response.code}"
-    except Exception as e:
-        return f"❌ 系统错误: {str(e)}"
+        resp = dashscope.Generation.call(model='qwen-plus', messages=[{'role':Role.SYSTEM,'content':system_prompt},{'role':Role.USER,'content':user_content}])
+        return resp.output.choices[0]['message']['content'] if resp.status_code==200 else "生成失败"
+    except Exception as e: return str(e)
 
-def call_qwen_tutor(messages, context, api_key):
-    """
-    [交互层] 苏格拉底导学助手。
-    基于生成的讲义 (context) 进行 RAG 对话，而不依赖外部知识。
-    """
+def call_qwen_advanced(main_text, exam_text, api_key):
+    """【模式B：高分拔尖】"""
     dashscope.api_key = api_key.strip().replace("：", "").replace(":", "")
     
-    system_prompt = f"你是一位苏格拉底式助教。\n【背景知识】\n{context}\n请基于背景知识进行反问式教学，不要直接给答案，而是引导学生思考。"
+    anchor_instruction = "检测到用户上传了真题。请执行“70% 相似度锚定”策略：70%题目考察真题同类考点(变种)，30%考察冷门重点。" if exam_text else "请基于课件的整体范围出题。"
     
-    api_messages = [{'role': Role.SYSTEM, 'content': system_prompt}]
-    for msg in messages:
-        api_messages.append({'role': msg['role'], 'content': msg['content']})
-        
+    system_prompt = f"""
+    你是一位魔鬼出题人。用户已经掌握了基础知识，现在需要进行“高分冲刺”。
+    {anchor_instruction}
+    
+    请输出一份【全真模拟试卷】：
+    1. 包含：单选(10题)、多选(5题)、简答(3题)、深度论述(1题)。
+    2. 难度：Hard。
+    3. **试题与答案分离**（先展示所有题目，最后再给答案解析）。
+    """
+    
+    user_content = f"课件：\n{main_text[:12000]}\n\n真题：\n{exam_text[:5000]}"
     try:
-        response = dashscope.Generation.call(
-            model='qwen-plus', messages=api_messages, result_format='message'
-        )
-        if response.status_code == 200: 
-            return response.output.choices[0]['message']['content']
-        else:
-            return "❌ 助教掉线了 (API Error)"
-    except Exception as e: 
-        return f"❌ 连接错误: {str(e)}"
+        resp = dashscope.Generation.call(model='qwen-plus', messages=[{'role':Role.SYSTEM,'content':system_prompt},{'role':Role.USER,'content':user_content}])
+        return resp.output.choices[0]['message']['content'] if resp.status_code==200 else "生成失败"
+    except Exception as e: return str(e)
 
 # =========================================================
-# [界面层] Streamlit UI 布局
+# [模型层 - 交互与答疑]
 # =========================================================
 
-# --- 侧边栏配置 ---
+def call_qwen_pure_chat(messages, api_key):
+    """纯净版答疑 (省流模式)"""
+    dashscope.api_key = api_key.strip().replace("：", "").replace(":", "")
+    
+    system_prompt = """
+    你是一个全能助教。请直接解答用户输入的具体题目或概念。
+    1. 如果用户输入了具体的题目内容，请直接给出解析。
+    2. 如果用户只输入了“第3题选什么”这种无上下文的问题，请礼貌地引导他：“为了节省你的大脑带宽（其实是 Token），请直接把题目复制发给我哦~”
+    """
+    
+    api_msgs = [{'role': Role.SYSTEM, 'content': system_prompt}]
+    for msg in messages: api_msgs.append({'role': msg['role'], 'content': msg['content']})
+    
+    try:
+        resp = dashscope.Generation.call(model='qwen-plus', messages=api_msgs)
+        return resp.output.choices[0]['message']['content'] if resp.status_code==200 else "API Error"
+    except: return "Error"
+
+def generate_socratic_question(context, api_key):
+    """苏格拉底出题"""
+    dashscope.api_key = api_key.strip().replace("：", "").replace(":", "")
+    
+    system_prompt = f"""
+    你是一位苏格拉底式老师。请阅读下方的【复习资料】，从中挑选一个核心知识点，向学生提出**一个**具有启发性的问题（不要选择题，要简答或思考题）。
+    要求：只输出问题本身，简短有力，语气自然。
+    【复习资料片段】：
+    {context[:3000]} 
+    """
+    
+    try:
+        resp = dashscope.Generation.call(model='qwen-plus', messages=[{'role':Role.SYSTEM,'content':system_prompt}])
+        return resp.output.choices[0]['message']['content'] if resp.status_code==200 else "出题失败"
+    except: return "Error"
+
+def call_socratic_feedback(previous_question, user_answer, api_key):
+    """苏格拉底点评"""
+    dashscope.api_key = api_key.strip().replace("：", "").replace(":", "")
+    
+    system_prompt = f"""
+    你是一位苏格拉底式老师。
+    刚才你问了学生这个问题：【{previous_question}】
+    学生的回答是：【{user_answer}】
+    请点评学生的回答：答对了给予鼓励并拓展；答错了给出提示引导。语气幽默鼓励。
+    """
+    
+    try:
+        resp = dashscope.Generation.call(model='qwen-plus', messages=[{'role':Role.SYSTEM,'content':system_prompt}])
+        return resp.output.choices[0]['message']['content'] if resp.status_code==200 else "API Error"
+    except: return "Error"
+
+# =========================================================
+# [UI层]
+# =========================================================
+
 with st.sidebar:
-    st.title("🍋 榨知机 Pro")
-    st.caption("🚀 版本：V1.2 (演示版)")
-    
-    # --- 📢 更新公告 (Updated for V1.2) ---
-    with st.expander("🔔 V1.2 更新日志", expanded=True):
+    st.title("🍋 榨知机 V1.3")
+    with st.expander("🔔 V1.3.更新说明", expanded=True):
         st.markdown("""
-        **最新特性 (New Features):**
-        1. 🔑 **免 Key 速通**：内置开发者演示 Key，无需输入即可直接体验！
-        2. 👁️ **视觉觉醒**：AI 读图能力上线，搞定 PPT 和扫描件。
-        3. ⚓ **真题锚定**：上传真题，押题更精准。
-        4. 🎨 **排版重构**：讲义格式深度优化。
+        1. 深度定制：0基础模式知识点覆盖更全，案例更丰富。
+        2. 交互升级：新增“考考我”按钮。
+        3. 极致省流：答疑模式不再重复读取课件。
         """)
-    # ------------------------------------
     
-    st.markdown("---")
-    
-    # --- 🔐 智能 Key 管理 (Secrets 逻辑) ---
-    # 1. 优先检查云端 Secrets
+    # 鉴权
     if "DASHSCOPE_API_KEY" in st.secrets:
         api_key = st.secrets["DASHSCOPE_API_KEY"]
-        st.success("✅ 已加载开发者演示 Key，可直接使用！")
-    
-    # 2. 如果无 Secrets，则要求用户输入
+        st.success("✅ 开发者演示模式")
     else:
         api_key = st.text_input("请输入通义千问 API Key", type="password")
-        if not api_key:
-            st.warning("⚠️ 个人部署请先输入 API Key")
-    # -------------------------------------
 
-    # 分区 1: 课件上传
-    st.markdown("### 1. 投喂原材料 (课件)")
-    uploaded_files = st.file_uploader(
-        "支持 PDF (含扫描件/PPT转PDF)", 
-        type=["pdf"], 
-        accept_multiple_files=True
-    )
+    st.markdown("---")
+    st.subheader("1. 选择复习策略")
+    mode = st.radio("你的目标是？", ("0基础(思维导图+知识点清单+模拟试题+问题答疑全流程)", "高分拔尖 (仅刷题)"), index=0)
     
-    # 分区 2: 真题上传
-    st.markdown("### 2. 投喂催化剂 (往年)")
-    st.info("💡 选填。上传真题，让 AI 懂老师的出题套路。")
-    uploaded_exams = st.file_uploader(
-        "上传真题/提纲 (PDF)", 
-        type=["pdf"], 
-        key="exam_uploader"
-    )
+    st.subheader("2. 上传课程文件")
+    uploaded_files = st.file_uploader("上传课件 (必需)", type=["pdf"], accept_multiple_files=True)
+    uploaded_exams = st.file_uploader("上传真题 (可选)", type=["pdf"], key="exam")
     
-    process_btn = st.button("开始深度榨取 🚀", type="primary")
+    process_btn = st.button("开始学习！", type="primary")
+    
+    # --- 苏格拉底按钮 ---
+    if st.session_state.result_content:
+        st.markdown("---")
+        st.markdown("### 互动练习")
+        if st.button("考考我"):
+            with st.spinner("助教正在出题..."):
+                question = generate_socratic_question(st.session_state.result_content, api_key)
+                if question:
+                    st.session_state.messages.append({"role": "assistant", "content": f"【苏格拉底提问】{question}"})
+                    st.session_state.last_socratic_question = question
+                    st.rerun()
 
-# --- 主内容区域 ---
-st.title("🎓 榨知机 V1.2：全能备考助手")
+# 主界面
+st.title("🍋 榨知机 V1.3 ：你的期末救星")
 
-# 逻辑分支：开始处理
+# --- 核心处理逻辑 ---
 if process_btn and uploaded_files and api_key:
-    with st.spinner('AI 正在看课件、读真题，大脑飞速运转中...'):
-        
-        # 1. 处理真题
-        exam_text = ""
-        if uploaded_exams:
-            exam_text = extract_text_from_pdf(uploaded_exams)
-            st.toast(f"✅ 已加载真题，长度：{len(exam_text)}字")
-
-        # 2. 处理课件 (智能路由：文本 vs 视觉)
+    with st.spinner('榨知机正在全速运转...'):
+        # 1. 预处理
+        exam_text = extract_text_from_pdf(uploaded_exams) if uploaded_exams else ""
         main_text = ""
-        vision_triggered = False
-        
-        progress_bar = st.progress(0)
-        
-        for i, file in enumerate(uploaded_files):
-            file_bytes = file.read()
-            
-            # 尝试提取文本
-            text = extract_text_from_pdf(file_bytes)
-            
-            # 触发视觉模型的条件：字数过少
+        for file in uploaded_files:
+            bytes_data = file.read()
+            text = extract_text_from_pdf(bytes_data)
             if len(text) < 50: 
-                st.warning(f"⚠️ 文件 {file.name} 看起来像图片/PPT，正在切换【视觉模型】...(速度稍慢)")
-                vision_triggered = True
-                
-                # 转换图片 -> 调用 Qwen-VL
-                images = pdf_pages_to_base64_images(file_bytes, max_pages=5)
-                vision_desc = call_qwen_vl_vision(images, api_key)
-                text = f"\n[视觉模型描述 - {file.name}]:\n{vision_desc}\n"
-            
+                st.warning(f"正在视觉分析: {file.name}")
+                imgs = pdf_pages_to_base64_images(bytes_data)
+                text = call_qwen_vl_vision(imgs, api_key)
             main_text += text
-            progress_bar.progress((i + 1) / len(uploaded_files))
-        
-        # 3. 综合生成
-        if len(main_text) > 50:
-            result = call_qwen_summary_v1_2(main_text, exam_text, api_key)
-            st.session_state.knowledge_base = result
-            st.success("🎉 榨取成功！")
-            if vision_triggered:
-                st.info("💡 刚才启用了视觉模型，已成功提取图片中的知识点。")
-        else:
-            st.error("❌ 无法提取有效内容，请检查文件是否损坏。")
 
-# 逻辑分支：结果展示与互动
-if st.session_state.knowledge_base:
+        # 2. 模式执行
+        if "0基础" in mode:
+            # 模式A
+            raw_result = call_qwen_speedrun(main_text, exam_text, api_key)
+            if "## part1_mindmap" in raw_result:
+                parts = raw_result.split("## part2_concepts")
+                st.session_state.mindmap_code = parts[0].replace("## part1_mindmap", "").strip()
+                st.session_state.result_content = "## 核心知识清单" + parts[1] if len(parts)>1 else raw_result
+            else:
+                st.session_state.result_content = raw_result
+        else:
+            # 模式B
+            st.session_state.result_content = call_qwen_advanced(main_text, exam_text, api_key)
+            st.session_state.mindmap_code = "" 
+            
+        st.success("✅ 生成完毕！")
+
+# --- 结果展示 ---
+if st.session_state.result_content:
+    # 板块①：思维导图
+    if st.session_state.mindmap_code:
+        st.subheader("🗺️ 知识点思维导图")
+        render_markmap(st.session_state.mindmap_code)
+        st.caption("💡 提示：可使用微信/QQ截图保存导图")
+        st.markdown("---")
+
     col1, col2 = st.columns([6, 4])
     
-    # 左侧：讲义区
+    # 板块②③：内容展示
     with col1:
-        st.markdown("### 📄 结构化讲义")
-        st.markdown(st.session_state.knowledge_base)
-        st.download_button("下载讲义 (.md)", st.session_state.knowledge_base, "复习资料.md")
-    
-    # 右侧：对话区
+        title = "全真模拟卷" if "模拟试卷" in st.session_state.result_content else "复习讲义"
+        st.subheader(f"{title}")
+        st.markdown(st.session_state.result_content)
+        # HTML 下载
+        st.markdown(get_download_html(st.session_state.result_content, title), unsafe_allow_html=True)
+
+    # 板块④：交互答疑
     with col2:
-        st.markdown("### 🤖 助教答疑")
-        # 渲染历史消息
-        for msg in st.session_state.messages:
-            with st.chat_message(msg["role"]):
-                st.write(msg["content"])
+        st.subheader("助教答疑")
+        st.caption("💡提示：AI 此时不记得课件内容。问具体题目请完整复制题干。")
         
-        # 处理新消息
-        if prompt := st.chat_input("不懂就问，或者输入'考考我'..."):
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]): st.write(msg["content"])
+        
+        if prompt := st.chat_input("复制题目 / 回答助教提问..."):
             st.session_state.messages.append({"role": "user", "content": prompt})
-            with st.chat_message("user"): 
-                st.write(prompt)
+            with st.chat_message("user"): st.write(prompt)
             
-            with st.spinner("助教思考中..."):
-                response = call_qwen_tutor(st.session_state.messages, st.session_state.knowledge_base, api_key)
+            with st.spinner("Thinking..."):
+                if st.session_state.last_socratic_question:
+                    response = call_socratic_feedback(st.session_state.last_socratic_question, prompt, api_key)
+                    st.session_state.last_socratic_question = None
+                else:
+                    response = call_qwen_pure_chat(st.session_state.messages, api_key)
             
             st.session_state.messages.append({"role": "assistant", "content": response})
-            with st.chat_message("assistant"): 
-                st.write(response)
+            with st.chat_message("assistant"): st.write(response)
 
-# 初始引导页
 elif not uploaded_files:
-    st.info("👈 请在左侧上传课件。V1.2 已支持免 Key 试用！")
+    st.info("👈 请在左侧选择模式并上传课件(必需)。")
