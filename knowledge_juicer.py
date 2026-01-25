@@ -65,7 +65,7 @@ def render_markmap(markdown_content):
     components.html(markmap_html, height=600)
 
 # =========================================================
-# [模型层 - 核心生成]
+# [模型层 - 核心生成 (已修复 Bug)]
 # =========================================================
 
 def call_qwen_vl_vision(images, api_key):
@@ -73,9 +73,13 @@ def call_qwen_vl_vision(images, api_key):
     dashscope.api_key = api_key.strip().replace("：", "").replace(":", "")
     content = [{"text": "你是大学助教。请详细分析这些 PPT/课件截图，提取里面的所有核心知识点、文字内容和图表含义，输出为详细的文本笔记。"}] + [{"image": img} for img in images]
     try:
+        # 视觉模型必须用 MultiModalConversation，且不需要 result_format='message' (它默认结构不同)
         resp = dashscope.MultiModalConversation.call(model='qwen-vl-max', messages=[{"role":"user","content":content}])
-        return resp.output.choices[0]['message']['content'][0]['text'] if resp.status_code==200 else ""
-    except: return ""
+        if resp.status_code == 200:
+            return resp.output.choices[0]['message']['content'][0]['text']
+        else:
+            return f"视觉分析失败: {resp.code} - {resp.message}"
+    except Exception as e: return f"视觉错误: {str(e)}"
 
 def call_qwen_speedrun(main_text, exam_text, api_key):
     """【模式A：0基础】Prompt 2 定制版"""
@@ -108,9 +112,17 @@ def call_qwen_speedrun(main_text, exam_text, api_key):
     
     user_content = f"课件：\n{main_text[:12000]}\n\n真题：\n{exam_text[:3000]}"
     try:
-        resp = dashscope.Generation.call(model='qwen-plus', messages=[{'role':Role.SYSTEM,'content':system_prompt},{'role':Role.USER,'content':user_content}])
-        return resp.output.choices[0]['message']['content'] if resp.status_code==200 else "生成失败"
-    except Exception as e: return str(e)
+        # ✅ FIX: 加上 result_format='message'
+        resp = dashscope.Generation.call(
+            model='qwen-plus', 
+            messages=[{'role':Role.SYSTEM,'content':system_prompt},{'role':Role.USER,'content':user_content}],
+            result_format='message' 
+        )
+        if resp.status_code == 200:
+            return resp.output.choices[0]['message']['content']
+        else:
+            return f"生成失败 (Code: {resp.code}): {resp.message}"
+    except Exception as e: return f"系统错误: {str(e)}"
 
 def call_qwen_advanced(main_text, exam_text, api_key):
     """【模式B：高分拔尖】"""
@@ -130,16 +142,24 @@ def call_qwen_advanced(main_text, exam_text, api_key):
     
     user_content = f"课件：\n{main_text[:12000]}\n\n真题：\n{exam_text[:5000]}"
     try:
-        resp = dashscope.Generation.call(model='qwen-plus', messages=[{'role':Role.SYSTEM,'content':system_prompt},{'role':Role.USER,'content':user_content}])
-        return resp.output.choices[0]['message']['content'] if resp.status_code==200 else "生成失败"
-    except Exception as e: return str(e)
+        # ✅ FIX: 加上 result_format='message'
+        resp = dashscope.Generation.call(
+            model='qwen-plus', 
+            messages=[{'role':Role.SYSTEM,'content':system_prompt},{'role':Role.USER,'content':user_content}],
+            result_format='message'
+        )
+        if resp.status_code == 200:
+            return resp.output.choices[0]['message']['content']
+        else:
+            return f"生成失败 (Code: {resp.code}): {resp.message}"
+    except Exception as e: return f"系统错误: {str(e)}"
 
 # =========================================================
 # [模型层 - 交互与答疑]
 # =========================================================
 
 def call_qwen_pure_chat(messages, api_key):
-    """纯净版答疑 (省流模式)"""
+    """纯净版答疑"""
     dashscope.api_key = api_key.strip().replace("：", "").replace(":", "")
     
     system_prompt = """
@@ -152,9 +172,10 @@ def call_qwen_pure_chat(messages, api_key):
     for msg in messages: api_msgs.append({'role': msg['role'], 'content': msg['content']})
     
     try:
-        resp = dashscope.Generation.call(model='qwen-plus', messages=api_msgs)
-        return resp.output.choices[0]['message']['content'] if resp.status_code==200 else "API Error"
-    except: return "Error"
+        # ✅ FIX: 加上 result_format='message'
+        resp = dashscope.Generation.call(model='qwen-plus', messages=api_msgs, result_format='message')
+        return resp.output.choices[0]['message']['content'] if resp.status_code==200 else f"API Error: {resp.code}"
+    except Exception as e: return f"Error: {str(e)}"
 
 def generate_socratic_question(context, api_key):
     """苏格拉底出题"""
@@ -168,7 +189,12 @@ def generate_socratic_question(context, api_key):
     """
     
     try:
-        resp = dashscope.Generation.call(model='qwen-plus', messages=[{'role':Role.SYSTEM,'content':system_prompt}])
+        # ✅ FIX: 加上 result_format='message'
+        resp = dashscope.Generation.call(
+            model='qwen-plus', 
+            messages=[{'role':Role.SYSTEM,'content':system_prompt}],
+            result_format='message'
+        )
         return resp.output.choices[0]['message']['content'] if resp.status_code==200 else "出题失败"
     except: return "Error"
 
@@ -184,7 +210,12 @@ def call_socratic_feedback(previous_question, user_answer, api_key):
     """
     
     try:
-        resp = dashscope.Generation.call(model='qwen-plus', messages=[{'role':Role.SYSTEM,'content':system_prompt}])
+        # ✅ FIX: 加上 result_format='message'
+        resp = dashscope.Generation.call(
+            model='qwen-plus', 
+            messages=[{'role':Role.SYSTEM,'content':system_prompt}],
+            result_format='message'
+        )
         return resp.output.choices[0]['message']['content'] if resp.status_code==200 else "API Error"
     except: return "Error"
 
@@ -235,7 +266,7 @@ st.title("🍋 榨知机 V1.3 ：你的期末救星")
 
 # --- 核心处理逻辑 ---
 if process_btn and uploaded_files and api_key:
-    with st.spinner('榨知机正在全速运转...'):
+    with st.spinner('榨知机正在全速运转...需要个三五分钟'):
         # 1. 预处理
         exam_text = extract_text_from_pdf(uploaded_exams) if uploaded_exams else ""
         main_text = ""
@@ -252,7 +283,11 @@ if process_btn and uploaded_files and api_key:
         if "0基础" in mode:
             # 模式A
             raw_result = call_qwen_speedrun(main_text, exam_text, api_key)
-            if "## part1_mindmap" in raw_result:
+            # 简单校验：如果生成失败返回了错误信息，则不解析
+            if "Code:" in raw_result or "失败" in raw_result:
+                st.error(raw_result)
+                st.session_state.result_content = ""
+            elif "## part1_mindmap" in raw_result:
                 parts = raw_result.split("## part2_concepts")
                 st.session_state.mindmap_code = parts[0].replace("## part1_mindmap", "").strip()
                 st.session_state.result_content = "## 核心知识清单" + parts[1] if len(parts)>1 else raw_result
@@ -260,10 +295,16 @@ if process_btn and uploaded_files and api_key:
                 st.session_state.result_content = raw_result
         else:
             # 模式B
-            st.session_state.result_content = call_qwen_advanced(main_text, exam_text, api_key)
+            raw_result = call_qwen_advanced(main_text, exam_text, api_key)
+            if "Code:" in raw_result or "失败" in raw_result:
+                st.error(raw_result)
+                st.session_state.result_content = ""
+            else:
+                st.session_state.result_content = raw_result
             st.session_state.mindmap_code = "" 
             
-        st.success("✅ 生成完毕！")
+        if st.session_state.result_content:
+            st.success("✅ 生成完毕！")
 
 # --- 结果展示 ---
 if st.session_state.result_content:
