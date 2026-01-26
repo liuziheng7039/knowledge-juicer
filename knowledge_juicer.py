@@ -4,6 +4,8 @@ import dashscope
 from dashscope.api_entities.dashscope_response import Role
 import base64
 import streamlit.components.v1 as components
+from docx import Document # 新增：用于生成Word
+import io # 新增：用于处理文件流
 
 # =========================================================
 # [配置层] 全局设置
@@ -42,10 +44,43 @@ def pdf_pages_to_base64_images(file_bytes, max_pages=5):
     doc.close()
     return images
 
-def get_download_html(content, title="复习资料"):
-    """生成 HTML 下载链接"""
-    b64 = base64.b64encode(content.encode()).decode()
-    return f'<a href="data:text/html;base64,{b64}" download="{title}.html">📥 点击下载完整讲义 (HTML版/可打印PDF)</a><br><small>💡 推荐复制内容到 Notion 或 Obsidian 查看最佳效果</small>'
+def generate_word_file(content):
+    """
+    [V1.3 新增] 将 Markdown 内容转换为 Word 文档对象
+    解析简单的 Markdown 语法：标题 (#)、列表 (-)
+    """
+    doc = Document()
+    doc.add_heading('复习资料 (由榨知机 V1.3 生成)', 0)
+
+    # 按行处理
+    for line in content.split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+            
+        # 识别标题
+        if line.startswith('# '):
+            doc.add_heading(line[2:], level=1)
+        elif line.startswith('## '):
+            doc.add_heading(line[3:], level=2)
+        elif line.startswith('### '):
+            doc.add_heading(line[4:], level=3)
+        elif line.startswith('#### '):
+            doc.add_heading(line[5:], level=4)
+        # 识别列表
+        elif line.startswith('- ') or line.startswith('* '):
+            doc.add_paragraph(line[2:], style='List Bullet')
+        # 正文
+        else:
+            # 简单清理一下 markdown 的加粗符号 **，让 Word 看起来更干净
+            clean_text = line.replace('**', '').replace('__', '')
+            doc.add_paragraph(clean_text)
+            
+    # 保存到内存流
+    bio = io.BytesIO()
+    doc.save(bio)
+    bio.seek(0)
+    return bio
 
 def render_markmap(markdown_content):
     """渲染思维导图"""
@@ -65,7 +100,7 @@ def render_markmap(markdown_content):
     components.html(markmap_html, height=600)
 
 # =========================================================
-# [模型层 - 核心生成 (已修复 Bug)]
+# [模型层 - 核心生成]
 # =========================================================
 
 def call_qwen_vl_vision(images, api_key):
@@ -73,7 +108,6 @@ def call_qwen_vl_vision(images, api_key):
     dashscope.api_key = api_key.strip().replace("：", "").replace(":", "")
     content = [{"text": "你是大学助教。请详细分析这些 PPT/课件截图，提取里面的所有核心知识点、文字内容和图表含义，输出为详细的文本笔记。"}] + [{"image": img} for img in images]
     try:
-        # 视觉模型必须用 MultiModalConversation，且不需要 result_format='message' (它默认结构不同)
         resp = dashscope.MultiModalConversation.call(model='qwen-vl-max', messages=[{"role":"user","content":content}])
         if resp.status_code == 200:
             return resp.output.choices[0]['message']['content'][0]['text']
@@ -107,16 +141,15 @@ def call_qwen_speedrun(main_text, exam_text, api_key):
 
     ## part4_exam
     # 📝 模拟真题
-    （一套模拟题，包含：10道单项选择 + 5个多选 + 5个判断 + 2道简答 + 2个案例分析/综合/论述/计算题。含答案，但答案要和题分开展示。）
+    （一套模拟题，包含：10道单项选择 + 5个多选 + 5个判断 + 2道简答 + 2个案例分析/综合/论述/计算题。含答案，但答案要放在试卷的最末端。）
     """
     
     user_content = f"课件：\n{main_text[:12000]}\n\n真题：\n{exam_text[:3000]}"
     try:
-        # ✅ FIX: 加上 result_format='message'
         resp = dashscope.Generation.call(
             model='qwen-plus', 
             messages=[{'role':Role.SYSTEM,'content':system_prompt},{'role':Role.USER,'content':user_content}],
-            result_format='message' 
+            result_format='message'
         )
         if resp.status_code == 200:
             return resp.output.choices[0]['message']['content']
@@ -135,14 +168,13 @@ def call_qwen_advanced(main_text, exam_text, api_key):
     {anchor_instruction}
     
     请输出一份【全真模拟试卷】：
-    1. 包含：单选(10题)、多选(5题)、简答(3题)、深度论述(1题)。
+    1. 包含：单选(10题)、多选(5题)、判断（5题）、简答(5题)、深度论述(2题)。
     2. 难度：Hard。
-    3. **试题与答案分离**（先展示所有题目，最后再给答案解析）。
+    3. 最后一道题目后面展示所有答案，不要把答案放在每一道题后。
     """
     
     user_content = f"课件：\n{main_text[:12000]}\n\n真题：\n{exam_text[:5000]}"
     try:
-        # ✅ FIX: 加上 result_format='message'
         resp = dashscope.Generation.call(
             model='qwen-plus', 
             messages=[{'role':Role.SYSTEM,'content':system_prompt},{'role':Role.USER,'content':user_content}],
@@ -172,7 +204,6 @@ def call_qwen_pure_chat(messages, api_key):
     for msg in messages: api_msgs.append({'role': msg['role'], 'content': msg['content']})
     
     try:
-        # ✅ FIX: 加上 result_format='message'
         resp = dashscope.Generation.call(model='qwen-plus', messages=api_msgs, result_format='message')
         return resp.output.choices[0]['message']['content'] if resp.status_code==200 else f"API Error: {resp.code}"
     except Exception as e: return f"Error: {str(e)}"
@@ -182,14 +213,13 @@ def generate_socratic_question(context, api_key):
     dashscope.api_key = api_key.strip().replace("：", "").replace(":", "")
     
     system_prompt = f"""
-    你是一位苏格拉底式老师。请阅读下方的【复习资料】，从中挑选一个核心知识点，向学生提出**一个**具有启发性的问题（不要选择题，要简答或思考题）。
+    你是一位苏格拉底式老师。请阅读下方的【复习资料】，从中挑选一个核心知识点，向学生提出一个具有启发性的问题（不要选择题，要简答或思考题）。
     要求：只输出问题本身，简短有力，语气自然。
     【复习资料片段】：
     {context[:3000]} 
     """
     
     try:
-        # ✅ FIX: 加上 result_format='message'
         resp = dashscope.Generation.call(
             model='qwen-plus', 
             messages=[{'role':Role.SYSTEM,'content':system_prompt}],
@@ -210,7 +240,6 @@ def call_socratic_feedback(previous_question, user_answer, api_key):
     """
     
     try:
-        # ✅ FIX: 加上 result_format='message'
         resp = dashscope.Generation.call(
             model='qwen-plus', 
             messages=[{'role':Role.SYSTEM,'content':system_prompt}],
@@ -235,13 +264,13 @@ with st.sidebar:
     # 鉴权
     if "DASHSCOPE_API_KEY" in st.secrets:
         api_key = st.secrets["DASHSCOPE_API_KEY"]
-        st.success("✅ 开发者演示模式")
+        st.success("✅开发者演示模式")
     else:
         api_key = st.text_input("请输入通义千问 API Key", type="password")
 
     st.markdown("---")
     st.subheader("1. 选择复习策略")
-    mode = st.radio("你的目标是？", ("0基础(思维导图+知识点清单+模拟试题+问题答疑全流程)", "高分拔尖 (仅刷题)"), index=0)
+    mode = st.radio("你的目标是？", ("帮我速通！(思维导图+知识清单+模拟试题+问题答疑)", "我是高玩！(仅刷题)"), index=0)
     
     st.subheader("2. 上传课程文件")
     uploaded_files = st.file_uploader("上传课件 (必需)", type=["pdf"], accept_multiple_files=True)
@@ -266,7 +295,7 @@ st.title("🍋 榨知机 V1.3 ：你的期末救星")
 
 # --- 核心处理逻辑 ---
 if process_btn and uploaded_files and api_key:
-    with st.spinner('榨知机正在全速运转...需要个三五分钟'):
+    with st.spinner('榨知机正在全速运转...大概需要三五分钟（我知道你很急但你先别急）'):
         # 1. 预处理
         exam_text = extract_text_from_pdf(uploaded_exams) if uploaded_exams else ""
         main_text = ""
@@ -279,11 +308,9 @@ if process_btn and uploaded_files and api_key:
                 text = call_qwen_vl_vision(imgs, api_key)
             main_text += text
 
-        # 2. 模式执行
-        if "0基础" in mode:
+        if "速通" in mode:
             # 模式A
             raw_result = call_qwen_speedrun(main_text, exam_text, api_key)
-            # 简单校验：如果生成失败返回了错误信息，则不解析
             if "Code:" in raw_result or "失败" in raw_result:
                 st.error(raw_result)
                 st.session_state.result_content = ""
@@ -322,8 +349,15 @@ if st.session_state.result_content:
         title = "全真模拟卷" if "模拟试卷" in st.session_state.result_content else "复习讲义"
         st.subheader(f"{title}")
         st.markdown(st.session_state.result_content)
-        # HTML 下载
-        st.markdown(get_download_html(st.session_state.result_content, title), unsafe_allow_html=True)
+        
+        # Word 下载按钮
+        docx_file = generate_word_file(st.session_state.result_content)
+        st.download_button(
+            label="📄 下载 Word 讲义/试卷 (.docx)",
+            data=docx_file,
+            file_name="复习资料.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
 
     # 板块④：交互答疑
     with col2:
