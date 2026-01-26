@@ -6,20 +6,26 @@ import base64
 import streamlit.components.v1 as components
 from docx import Document
 import io
+import random # 用于概率控制
 
 # =========================================================
 # [配置层]
 # =========================================================
 st.set_page_config(page_title="榨知机 V1.4", page_icon="🍋", layout="wide")
 
+# 初始化状态
 if "result_content" not in st.session_state:
-    st.session_state.result_content = ""
+    st.session_state.result_content = ""      # 讲义内容
 if "mindmap_code" not in st.session_state:
-    st.session_state.mindmap_code = ""
+    st.session_state.mindmap_code = ""        # 导图代码
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    st.session_state.messages = []            # 聊天记录
 if "last_socratic_question" not in st.session_state:
-    st.session_state.last_socratic_question = None
+    st.session_state.last_socratic_question = None # 记录题目状态
+if "course_name" not in st.session_state:
+    st.session_state.course_name = "通用学科" # 存储提取的课程名
+if "input_disabled" not in st.session_state:
+    st.session_state.input_disabled = False   # 控制输入框显隐
 
 # =========================================================
 # [工具层]
@@ -78,6 +84,22 @@ def render_markmap(markdown_content):
 # =========================================================
 # [模型层]
 # =========================================================
+
+def extract_course_name(text, api_key):
+    """
+    [V1.4 新增] “考考我”
+    """
+    dashscope.api_key = api_key.strip().replace("：", "").replace(":", "")
+    system_prompt = "你是一个信息提取助手。请阅读下面的文本（课件片段），提取出这门课程的名称（例如：‘宏观经济学’、‘数据结构’）。\n要求：只输出课程名称，不要任何标点符号或废话。"
+    try:
+        # 只读取前1000字，节省Token且速度快
+        resp = dashscope.Generation.call(
+            model='qwen-turbo', # 使用轻量级模型
+            messages=[{'role':Role.SYSTEM,'content':system_prompt},{'role':Role.USER,'content':text[:1000]}],
+            result_format='message'
+        )
+        return resp.output.choices[0]['message']['content'] if resp.status_code==200 else "通用课程"
+    except: return "通用课程"
 
 def call_qwen_vl_vision(images, api_key):
     dashscope.api_key = api_key.strip().replace("：", "").replace(":", "")
@@ -139,23 +161,26 @@ def call_qwen_pure_chat(messages, api_key):
         return resp.output.choices[0]['message']['content'] if resp.status_code==200 else "Error"
     except: return "Error"
 
-def generate_socratic_question(context, api_key):
+def generate_socratic_question(course_name, api_key):
     """
-    [V1.4 升级] 兼容无课件模式
+    [V1.4 升级] 基于课程出题
     """
     dashscope.api_key = api_key.strip().replace("：", "").replace(":", "")
     
-    if not context:
-        # 无课件时的 Prompt
-        system_prompt = "你是一位苏格拉底式面试官。用户现在没有上传任何资料。请礼貌地问用户：'看来你还没有上传复习资料，你想挑战哪个学科或主题的知识点？请告诉我，我来出题。'"
+    # 概率逻辑
+    seed = random.random()
+    if seed < 0.5:
+        q_type = "单选题 (Single Choice Question)"
+    elif seed < 0.85:
+        q_type = "简答题 (Short Answer Question)"
     else:
-        # 有课件时的 Prompt
-        system_prompt = f"""
-        你是一位苏格拉底式老师。请基于下方【资料片段】，挑一个核心点，提出一个启发性问题（非选择题）。
-        要求：简短有力，语气自然。
-        【资料片段】：
-        {context[:3000]}
-        """
+        q_type = "综合论述题 (Essay Question)"
+        
+    system_prompt = f"""
+    你是一位严肃的考官。现在的考试科目是《{course_name}》。
+    请利用你的知识储备，出一道 {q_type}。
+    要求：直接出题，不要输出答案，不要废话。
+    """
     
     try:
         resp = dashscope.Generation.call(model='qwen-plus', messages=[{'role':Role.SYSTEM,'content':system_prompt}], result_format='message')
@@ -165,10 +190,13 @@ def generate_socratic_question(context, api_key):
 def call_socratic_feedback(previous_question, user_answer, api_key):
     dashscope.api_key = api_key.strip().replace("：", "").replace(":", "")
     system_prompt = f"""
-    你是一位苏格拉底式老师。
-    问题：【{previous_question}】
+    你是一位阅卷老师。
+    题目：【{previous_question}】
     学生回答：【{user_answer}】
-    请点评：答对给予鼓励拓展；答错给出引导提示。
+    请点评：
+    1. 判断对错。
+    2. 如果是选择题，给出正确选项和解析。
+    3. 如果是简答/论述，指出得分点和失分点。
     """
     try:
         resp = dashscope.Generation.call(model='qwen-plus', messages=[{'role':Role.SYSTEM,'content':system_prompt}], result_format='message')
@@ -180,9 +208,8 @@ def call_socratic_feedback(previous_question, user_answer, api_key):
 # =========================================================
 
 with st.sidebar:
-    st.title("🍋 榨知机 V1.4")
+    st.title("🍋 榨知机 V1.4 ")
     
-    # 鉴权
     if "DASHSCOPE_API_KEY" in st.secrets:
         api_key = st.secrets["DASHSCOPE_API_KEY"]
         st.success("✅ 开发者演示模式")
@@ -191,33 +218,35 @@ with st.sidebar:
 
     st.markdown("---")
     
-    # --- 工具箱 (Toolbox) - 核心位置 ---
-    st.markdown("### 🛠️ 互动工具箱")
-    
-    # 1. 考考我 (独立按钮)
-    if st.button("🙋‍♂️ 考考我 (Socratic Test)", use_container_width=True):
-        if not api_key:
-            st.error("请先配置 API Key")
-        else:
-            with st.spinner("面试官准备中..."):
-                question = generate_socratic_question(st.session_state.result_content, api_key)
-                if question:
-                    st.session_state.messages.append({"role": "assistant", "content": f"【苏格拉底提问】{question}"})
-                    st.session_state.last_socratic_question = question
-                    st.rerun()
-
-    # 2. 下载按钮 (有内容时显示)
+    # --- 工具箱 (仅当生成内容后显示) ---
     if st.session_state.result_content:
+        st.markdown("🛠️ 互动工具箱")
+        
+        # 1. 考考我 (基于课程名)
+        if st.button("🙋‍♂️ 考考我 ", use_container_width=True):
+            if not api_key:
+                st.error("请先配置 API Key")
+            else:
+                with st.spinner(f"正在生成《{st.session_state.course_name}》试题..."):
+                    question = generate_socratic_question(st.session_state.course_name, api_key)
+                    if question:
+                        # 存入历史
+                        st.session_state.messages.append({"role": "assistant", "content": f"【考考我】{question}"})
+                        # 标记状态：等待回答，并解锁输入框
+                        st.session_state.last_socratic_question = question
+                        st.session_state.input_disabled = False 
+                        st.rerun() # 强制刷新显示输入框
+
+        # 2. 下载按钮
         docx_file = generate_word_file(st.session_state.result_content)
         st.download_button(
-            label="📄 下载 Word 讲义/试卷",
+            label="📄 下载 Word 讲义",
             data=docx_file,
-            file_name="复习资料.docx",
+            file_name=f"{st.session_state.course_name}_复习资料.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             use_container_width=True
         )
-    
-    st.markdown("---")
+        st.markdown("---")
     
     # --- 设置区 ---
     st.markdown("### ⚙️ 复习设置")
@@ -229,9 +258,10 @@ with st.sidebar:
 # 主界面
 st.title("🍋 榨知机 V1.4 ：你的期末救星")
 
-# 核心处理
+# 核心处理逻辑
 if process_btn and uploaded_files and api_key:
     with st.spinner('榨知机正在全速运转...'):
+        # 1. 文本提取
         exam_text = extract_text_from_pdf(uploaded_exams) if uploaded_exams else ""
         main_text = ""
         for file in uploaded_files:
@@ -243,6 +273,10 @@ if process_btn and uploaded_files and api_key:
                 text = call_qwen_vl_vision(imgs, api_key)
             main_text += text
 
+        # 2. [新增] 提取课程名
+        st.session_state.course_name = extract_course_name(main_text, api_key)
+
+        # 3. 模式执行
         if "速通" in mode:
             raw_result = call_qwen_speedrun(main_text, exam_text, api_key)
             if "## part1_mindmap" in raw_result:
@@ -256,39 +290,68 @@ if process_btn and uploaded_files and api_key:
             st.session_state.result_content = raw_result
             st.session_state.mindmap_code = ""
             
-        st.success("✅ 生成完毕！请在左侧侧边栏下载 Word 文档。")
+        # 4. [新增] 强制刷新，让侧边栏按钮瞬间显示
+        st.rerun()
 
-# 结果展示
+# 结果展示与动态布局
 if st.session_state.result_content:
+    # --- 布局 B：生成后 (左侧讲义 + 右侧聊天) ---
+    st.success(f"✅ 《{st.session_state.course_name}》复习资料已生成！请在左侧下载 Word。")
+    
     if st.session_state.mindmap_code:
         st.subheader("🗺️ 知识点思维导图")
         render_markmap(st.session_state.mindmap_code)
-        st.caption("💡 提示：可截图保存")
         st.markdown("---")
 
     col1, col2 = st.columns([6, 4])
     with col1:
-        st.subheader("📄 复习资料 / 试卷")
+        st.subheader("📄 复习资料")
         st.markdown(st.session_state.result_content)
-        # 底部不再放下载按钮，避免找不到
 
     with col2:
         st.subheader("🤖 助教答疑")
-        st.caption("💡 AI 不记忆上下文。问具体题目请复制题干。")
+        # 渲染历史
         for msg in st.session_state.messages:
             with st.chat_message(msg["role"]): st.write(msg["content"])
         
-        if prompt := st.chat_input("输入答案 或 提问..."):
+        # 核心逻辑：输入框显隐控制 (Hardcore Mode)
+        if not st.session_state.input_disabled:
+            if prompt := st.chat_input("输入答案 或 提问..."):
+                st.session_state.messages.append({"role": "user", "content": prompt})
+                with st.chat_message("user"): st.write(prompt)
+                
+                with st.spinner("AI正在批改..."):
+                    # 如果正在进行考考我
+                    if st.session_state.last_socratic_question:
+                        response = call_socratic_feedback(st.session_state.last_socratic_question, prompt, api_key)
+                        # 闭环动作：点评完毕 -> 隐藏输入框
+                        st.session_state.last_socratic_question = None
+                        st.session_state.input_disabled = True # 🔒 锁住！
+                    else:
+                        # 普通聊天 (带记忆)
+                        response = call_qwen_pure_chat(st.session_state.messages, api_key)
+                
+                st.session_state.messages.append({"role": "assistant", "content": response})
+                # 强制刷新以更新输入框状态
+                st.rerun()
+        else:
+            st.info("🔒 本轮测试已结束。请点击侧边栏“考考我”开启下一题，或重置页面。")
+
+else:
+    # --- 布局 A：初始状态 (全屏聊天) ---
+    st.info("👈 请先在左侧上传课件，生成讲义后解锁完整功能。")
+    
+    # 初始状态下的聊天框 (纯伴读)
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]): st.write(msg["content"])
+        
+    if prompt := st.chat_input("我是你的 AI 伴读，有什么可以帮你的？"):
+         if not api_key:
+             st.error("请先配置 API Key")
+         else:
             st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"): st.write(prompt)
-            with st.spinner("思考中..."):
-                if st.session_state.last_socratic_question:
-                    response = call_socratic_feedback(st.session_state.last_socratic_question, prompt, api_key)
-                    st.session_state.last_socratic_question = None
-                else:
-                    response = call_qwen_pure_chat(st.session_state.messages, api_key)
+            with st.spinner("Thinking..."):
+                response = call_qwen_pure_chat(st.session_state.messages, api_key)
             st.session_state.messages.append({"role": "assistant", "content": response})
             with st.chat_message("assistant"): st.write(response)
-
-elif not uploaded_files:
-    st.info("👈 请在左侧上传课件，或者直接点击“考考我”进行面试挑战。")
