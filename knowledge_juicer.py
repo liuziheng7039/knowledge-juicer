@@ -11,56 +11,139 @@ import json
 import re
 import threading
 import time
+import os
+
+# =========================================================
+# [UI 文案集中管理]
+# =========================================================
+UI = {
+    # 页面/标题
+    "PAGE_TITLE": "榨知机 V1.5",
+    "SIDEBAR_TITLE": "🍋 榨知机 V1.5",
+    "MAIN_TITLE": "🍋 榨知机 V1.5：你的期末救星",
+
+    # Secrets
+    "DEV_MODE": "✅ 开发者演示模式",
+
+    # 工具箱
+    "TOOLBOX": "🛠️ 工具箱",
+    "QUIZ_BTN": "🙋‍♂️ 考考我（来一组题练练手）",
+    "DOWNLOAD_BTN": "📄 下载 知识清单",
+
+    # 设置区
+    "SETTINGS": "### ⚙️ 复习设置",
+    "GOAL": "目标：",
+    "MODE_BEGINNER": "俺0基础 ！（召唤所有知识）",
+    "MODE_PRO": "我是高玩！（我是来刷题的）",
+    "UPLOAD_MAIN": "上传课件 (必需)",
+    "UPLOAD_EXAM": "上传真题 (可选，用于标记考点)",
+    "START_BTN": "🚀 开始学习",
+
+    # 生成结果提示
+    "GEN_FAIL": "知识清单生成失败：",
+    "GEN_SUCCESS": "✅ 《{course_name}》知识清单已生成！侧边栏可下载/考考我。",
+
+    # 左侧展示
+    "LEFT_HEADER": "📄 核心知识清单",
+    "MD_TITLE": "# 📘 核心知识清单",
+    "MD_EXPLAIN": "- 解释：",
+    "MD_EXAMPLE": "- 例子：",
+    "MD_SCORE": "（重点指数：{score}）",
+
+    # 右侧
+    "RIGHT_HEADER": "🤖 右侧：答疑 / 刷题与批改",
+    "MODE_SWITCH": "模式",
+    "MODE_QA": "答疑",
+    "MODE_QUIZ": "刷题与批改",
+
+    # 答疑
+    "QA_INPUT": "基于知识清单提问…（不会回答知识清单未覆盖的新考点）",
+    "QA_SPINNER": "AI 正在基于知识清单作答...",
+
+    # 刷题
+    "QUIZ_HINT": "点击侧边栏「考考我」开始刷题",
+    "QUIZ_TITLE": "### 📝 高频卷（10题）",
+    "QUIZ_PROGRESS": "进度：第 {cur}/{total} 题｜题组：{set_id}",
+    "QUIZ_CONCEPT": "考点：{title}",
+    "QUIZ_STEM": "**题目：**",
+
+    # 错题循环
+    "REMEDIAL_TITLE": "### 🔁 错题循环（直到掌握）",
+    "REMEDIAL_META": "考点：{title} ｜ 已错次数：{n}/4",
+    "REMEDIAL_STUCK": "该考点已连续错误达到上限（4次）。建议回看该概念后再挑战。",
+    "REMEDIAL_REVIEW": "📌 建议回看：",
+    "REMEDIAL_DONE": "🎉 错题已全部掌握！本轮结束。",
+    "REMEDIAL_END": "🎉 错题循环已结束（部分考点需回看后再挑战）。",
+
+    # 批改反馈
+    "GRADE_FAIL": "⚠️ 批改失败：",
+    "CORRECT": "✅ 正确",
+    "WRONG": "❌ 错误",
+    "RIGHT_ANSWER": "正确答案：",
+    "SUGGEST_REVIEW": "建议回看该概念。",
+
+    # 下一题
+    "NEXT_BTN": "➡️ 下一题 / 继续",
+
+    # 简答/论述
+    "TEXTAREA_LABEL": "请输入你的答案：",
+    "TEXTAREA_PLACEHOLDER": "简答/论述：写要点即可，越结构化越好。",
+    "SUBMIT_BTN": "✅ 提交答案",
+    "NEED_INPUT": "请先输入答案。",
+
+    # 未生成提示
+    "EMPTY_HINT": "👈 请先在左侧上传课件并点击「开始学习」。生成知识清单后才会解锁：下载 / 高频刷题 / 答疑。",
+
+    # 上传中文引导（用于替代组件内部英文提示）
+    "UPLOAD_TIP": "把 PDF 拖到下面区域，或点击浏览按钮上传。",
+}
 
 # =========================================================
 # [配置层]
 # =========================================================
-st.set_page_config(page_title="榨知机 V1.5", page_icon="🍋", layout="wide")
+st.set_page_config(page_title=UI["PAGE_TITLE"], page_icon="🍋", layout="wide")
 
-# -------------------------
-# Session State Init
-# -------------------------
+# =========================================================
+# [State Init]
+# =========================================================
 def init_state():
     if "course_name" not in st.session_state:
         st.session_state.course_name = "通用课程"
 
-    # 复习包（结构化）
     if "review_pack" not in st.session_state:
         st.session_state.review_pack = None  # dict
 
-    # 展示用讲义（markdown）
     if "result_content" not in st.session_state:
-        st.session_state.result_content = ""  # 仅 concepts 的 markdown
+        st.session_state.result_content = ""  # markdown（知识清单）
 
-    # 导图
     if "mindmap_code" not in st.session_state:
         st.session_state.mindmap_code = ""
 
-    # 右侧答疑聊天记录（只在生成后可用）
     if "qa_messages" not in st.session_state:
         st.session_state.qa_messages = []
 
-    # 题组缓存（预生成 + 下一组后台生成）
     if "question_sets" not in st.session_state:
-        st.session_state.question_sets = []   # list[dict]，每个 dict 是一组 10 题（JSON）
+        st.session_state.question_sets = []  # list[dict]
+
     if "next_set_generating" not in st.session_state:
         st.session_state.next_set_generating = False
+
+    # 不再前端展示 next_set_error，但内部仍留着便于排查
     if "next_set_error" not in st.session_state:
         st.session_state.next_set_error = ""
 
-    # 刷题状态机
     if "quiz" not in st.session_state:
         st.session_state.quiz = {
             "active": False,
             "phase": "main",           # main / remedial
-            "questions": [],           # 当前做的题列表
+            "questions": [],
             "idx": 0,
-            "last_feedback": None,     # str
-            "await_next": False,       # 是否等待用户点“下一题”
+            "last_feedback": None,
+            "await_next": False,
             "wrong_concepts": {},      # concept_key -> {"attempts": int, "stuck": bool, "preferred_type": str}
             "concept_mastery": {},     # concept_key -> bool
             "remedial_queue": [],      # list[concept_key]
-            "current_set_id": None,    # 当前题组id（可选）
+            "current_set_id": None,
         }
 
 init_state()
@@ -68,7 +151,6 @@ init_state()
 # =========================================================
 # [工具层]
 # =========================================================
-
 def extract_text_from_pdf(file_bytes):
     doc = fitz.open(stream=file_bytes, filetype="pdf")
     text = ""
@@ -88,34 +170,10 @@ def pdf_pages_to_base64_images(file_bytes, max_pages=5):
     doc.close()
     return images
 
-def render_markmap(markdown_content):
-    markmap_html = f"""
-    <!DOCTYPE html>
-    <style>
-      svg {{
-        width: 100%;
-        height: 500px;
-        background: white;
-        border-radius: 8px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-      }}
-    </style>
-    <script src="https://cdn.jsdelivr.net/npm/d3@6"></script>
-    <script src="https://cdn.jsdelivr.net/npm/markmap-view@0.14.4"></script>
-    <div id="markmap"></div>
-    <script>
-        const markdown = `{markdown_content.replace('`', '\\`')}`;
-        const transformer = new markmap.Transformer();
-        const {{ root }} = transformer.transform(markdown);
-        markmap.Markmap.create('#markmap', null, root);
-    </script>
-    """
-    components.html(markmap_html, height=520)
-
-def generate_word_file_from_concepts(course_name, concepts_markdown):
+def generate_word_file_from_markdown(course_name, md):
     doc = Document()
-    doc.add_heading(f'复习资料（{course_name}）- 核心知识清单', 0)
-    for line in concepts_markdown.split('\n'):
+    doc.add_heading(f'知识清单（{course_name}）', 0)
+    for line in md.split('\n'):
         line = line.strip()
         if not line:
             continue
@@ -135,12 +193,8 @@ def generate_word_file_from_concepts(course_name, concepts_markdown):
     return bio
 
 def safe_extract_json(text: str):
-    """
-    尽量从模型输出中提取 JSON（允许前后夹杂少量文本）。
-    """
     if not text:
         return None
-    # 优先找第一个 {...} 或 [...]
     m = re.search(r'(\{.*\}|\[.*\])', text, re.S)
     if not m:
         return None
@@ -148,39 +202,35 @@ def safe_extract_json(text: str):
     try:
         return json.loads(raw)
     except:
-        # 常见容错：去掉尾逗号
         raw2 = re.sub(r',\s*([\]}])', r'\1', raw)
         try:
             return json.loads(raw2)
         except:
             return None
 
-def concepts_to_markdown(review_pack: dict):
-    """
-    把结构化 concepts 转成可读 markdown（用于左侧展示+Word导出）
-    """
-    lines = ["# 📘 核心知识清单（Concepts）"]
-    if not review_pack or "concepts" not in review_pack:
+def concepts_to_markdown(pack: dict):
+    lines = [UI["MD_TITLE"]]
+    if not pack or "concepts" not in pack:
         return "\n".join(lines)
 
-    for i, c in enumerate(review_pack["concepts"], start=1):
-        star = "⭐ " if c.get("is_star") else ""
-        title = c.get("title", f"概念{i}")
+    for c in pack["concepts"]:
+        title = c.get("title", "未命名考点")
         explain = c.get("explain", "")
         example = c.get("example", "")
         score = c.get("final_score", c.get("model_score", 0))
-        lines.append(f"## {star}{title}（高频指数：{score}）")
+        star = "⭐ " if c.get("is_star") else ""
+
+        lines.append(f"## {star}{title}{UI['MD_SCORE'].format(score=score)}")
         if explain:
-            lines.append(f"- 解释：{explain}")
+            lines.append(f"{UI['MD_EXPLAIN']}{explain}")
         if example:
-            lines.append(f"- 例子：{example}")
-        lines.append("")  # 空行
+            lines.append(f"{UI['MD_EXAMPLE']}{example}")
+        lines.append("")
     return "\n".join(lines)
 
 # =========================================================
 # [模型层]
 # =========================================================
-
 def _set_api_key(api_key: str):
     dashscope.api_key = api_key.strip().replace("：", "").replace(":", "")
 
@@ -199,14 +249,7 @@ def call_qwen_vl_vision(images, api_key):
         return ""
 
 def call_qwen_generate_concepts_json(main_text, exam_text, api_key):
-    """
-    生成 concepts-only 的复习包：课程名 + concepts（含 is_star + model_score）
-    你选择的策略：
-      - ⭐ 仅在用户上传真题时存在
-      - 最终排序分 = A+B混合：is_star 60% + model_score 40%
-    """
     _set_api_key(api_key)
-
     has_exam = bool(exam_text and exam_text.strip())
 
     system_prompt = f"""
@@ -225,7 +268,6 @@ JSON schema（必须严格遵守）：
     }}
   ]
 }}
-
 要求：
 1) concepts 输出 15-25 条（宁可少而精，覆盖全课）。
 2) 如果提供了真题，请将与真题高度一致/同类高频考点标记 is_star=true；若无真题，全部 is_star=false。
@@ -233,77 +275,56 @@ JSON schema（必须严格遵守）：
 4) 不要输出任何多余字段。
 """
 
-    exam_hint = "真题（有）" if has_exam else "真题（无）"
     user_content = f"""
-{exam_hint}
+真题：{"有" if has_exam else "无"}
 【课件正文】：
 {main_text[:14000]}
-
 【真题正文】：
 {exam_text[:6000] if has_exam else ""}
 """
 
-    try:
-        resp = dashscope.Generation.call(
-            model='qwen-plus',
-            messages=[
-                {'role': Role.SYSTEM, 'content': system_prompt},
-                {'role': Role.USER, 'content': user_content},
-            ],
-            result_format='message'
-        )
-        if resp.status_code != 200:
-            return None, f"Error: {resp.message}"
+    resp = dashscope.Generation.call(
+        model='qwen-plus',
+        messages=[
+            {'role': Role.SYSTEM, 'content': system_prompt},
+            {'role': Role.USER, 'content': user_content},
+        ],
+        result_format='message'
+    )
+    if resp.status_code != 200:
+        return None, f"Error: {resp.message}"
 
-        raw = resp.output.choices[0]['message']['content']
-        data = safe_extract_json(raw)
-        if not data or "concepts" not in data:
-            return None, "Error: JSON 解析失败"
+    raw = resp.output.choices[0]['message']['content']
+    data = safe_extract_json(raw)
+    if not data or "concepts" not in data:
+        return None, "Error: JSON 解析失败"
 
-        # 计算 final_score（A+B混合）
-        concepts = data["concepts"]
-        for c in concepts:
-            is_star = bool(c.get("is_star")) if has_exam else False
-            ms = c.get("model_score", 0)
-            try:
-                ms = int(ms)
-            except:
-                ms = 0
-            ms = max(0, min(100, ms))
+    concepts = data["concepts"]
+    for c in concepts:
+        is_star = bool(c.get("is_star")) if has_exam else False
+        ms = c.get("model_score", 0)
+        try:
+            ms = int(ms)
+        except:
+            ms = 0
+        ms = max(0, min(100, ms))
 
-            if has_exam:
-                final = round(0.6 * (100 if is_star else 0) + 0.4 * ms)
-            else:
-                final = ms  # 无真题就全靠 model_score
-                c["is_star"] = False
+        if has_exam:
+            final = round(0.6 * (100 if is_star else 0) + 0.4 * ms)
+        else:
+            final = ms
+            c["is_star"] = False
 
-            c["model_score"] = ms
-            c["final_score"] = int(final)
+        c["model_score"] = ms
+        c["final_score"] = int(final)
 
-        # 课程名兜底
-        course_name = data.get("course_name") or "通用课程"
-        data["course_name"] = course_name
-
-        # 按 final_score 排序（高->低）
-        data["concepts"] = sorted(concepts, key=lambda x: x.get("final_score", 0), reverse=True)
-
-        return data, None
-    except Exception as e:
-        return None, str(e)
+    data["course_name"] = data.get("course_name") or "通用课程"
+    data["concepts"] = sorted(concepts, key=lambda x: x.get("final_score", 0), reverse=True)
+    return data, None
 
 def call_qwen_generate_question_set(review_pack, api_key):
-    """
-    预生成一组题：10题（7单选+2简答+1论述），按 concepts 高频到低频锚定。
-    输出严格 JSON：
-    {
-      "set_id": "...",
-      "questions":[...]
-    }
-    """
     _set_api_key(api_key)
-
     concepts = review_pack.get("concepts", []) if review_pack else []
-    # 取前 12 个高频概念做锚定（允许少量扩展，但考点来自这些）
     top = concepts[:12]
     top_payload = [
         {
@@ -319,17 +340,13 @@ def call_qwen_generate_question_set(review_pack, api_key):
     system_prompt = """
 你是一个“高频考点出题器”。请严格输出 JSON（不要 markdown，不要解释）。
 目标：生成一组 10 道题，按“最可能考”到“较不可能考”排序。
-
-输入会提供 12 条高频概念（已按 final_score 排序）。
-出题规则：
+规则：
 1) 必须严格生成：7道单选题 + 2道简答题 + 1道综合论述题。
-2) 每道题必须绑定一个概念 concept_id，并尽量覆盖不同概念（允许重复但不要全重复）。
+2) 每道题必须绑定一个概念 concept_id，并尽量覆盖不同概念。
 3) 单选题提供 A/B/C/D 四个选项；answer 必须是 "A"|"B"|"C"|"D"。
-4) 简答/论述题 answer 用“要点列表”的形式给评分要点（不是一大段）。
-5) 解析 explanation 要简洁，且允许少量扩展解释，但考点必须来自给定概念。
-6) questions 必须按考点高频到低频排序（优先 concept final_score 高的概念）。
-7) 不要输出任何额外字段。
-
+4) 简答/论述题 answer 用“要点列表”的形式给评分要点。
+5) 解析 explanation 要简洁，允许少量扩展解释，但考点必须来自给定概念。
+6) questions 必须按概念 final_score 高->低排序优先绑定。
 JSON schema：
 {
   "set_id": "string",
@@ -340,8 +357,8 @@ JSON schema：
       "concept_id": "c1",
       "concept_title": "概念标题",
       "stem": "题干",
-      "options": {"A":"...", "B":"...", "C":"...", "D":"..."} ,   // 仅 single
-      "answer": "A" 或 ["要点1","要点2"] ,
+      "options": {"A":"...", "B":"...", "C":"...", "D":"..."},
+      "answer": "A" 或 ["要点1","要点2"],
       "explanation": "解析（用于答错时）"
     }
   ]
@@ -349,49 +366,28 @@ JSON schema：
 """
 
     user_content = json.dumps({"top_concepts": top_payload}, ensure_ascii=False)
+    resp = dashscope.Generation.call(
+        model='qwen-plus',
+        messages=[
+            {'role': Role.SYSTEM, 'content': system_prompt},
+            {'role': Role.USER, 'content': user_content},
+        ],
+        result_format='message'
+    )
+    if resp.status_code != 200:
+        return None, f"Error: {resp.message}"
 
-    try:
-        resp = dashscope.Generation.call(
-            model='qwen-plus',
-            messages=[
-                {'role': Role.SYSTEM, 'content': system_prompt},
-                {'role': Role.USER, 'content': user_content},
-            ],
-            result_format='message'
-        )
-        if resp.status_code != 200:
-            return None, f"Error: {resp.message}"
+    raw = resp.output.choices[0]['message']['content']
+    data = safe_extract_json(raw)
+    if not data or "questions" not in data:
+        return None, "Error: 题组 JSON 解析失败"
 
-        raw = resp.output.choices[0]['message']['content']
-        data = safe_extract_json(raw)
-        if not data or "questions" not in data:
-            return None, "Error: 题组 JSON 解析失败"
-
-        # 简单校验并兜底 set_id
-        if not data.get("set_id"):
-            data["set_id"] = f"set_{int(time.time())}_{random.randint(1000,9999)}"
-
-        return data, None
-    except Exception as e:
-        return None, str(e)
+    if not data.get("set_id"):
+        data["set_id"] = f"set_{int(time.time())}_{random.randint(1000,9999)}"
+    return data, None
 
 def call_qwen_grade_answer(question, user_answer, review_pack, api_key):
-    """
-    批改：严格锚定 concepts（允许少量扩展解释）。
-    规则：
-      - 若答对：只输出 why_correct（告诉你为什么做对了）
-      - 若答错：输出 correct_answer + explanation（并记录错题）
-    输出严格 JSON：
-    {
-      "is_correct": true/false,
-      "why_correct": "...",              // only if correct
-      "correct_answer": "...",           // only if incorrect
-      "explanation": "..."               // only if incorrect
-    }
-    """
     _set_api_key(api_key)
-
-    # 找到该题对应 concept 的内容作上下文
     concept_id = question.get("concept_id")
     concept_ctx = None
     for c in (review_pack.get("concepts") or []):
@@ -401,12 +397,11 @@ def call_qwen_grade_answer(question, user_answer, review_pack, api_key):
     concept_ctx = concept_ctx or {}
 
     system_prompt = """
-你是一个“严格锚定复习包的阅卷老师”。请只输出 JSON（不要 markdown，不要解释）。
-你将收到：一个题目 + 用户答案 + 对应概念上下文。
+你是一个“严格锚定知识清单的阅卷老师”。请只输出 JSON（不要 markdown，不要解释）。
 要求：
 1) 判断用户答案正确与否。
-2) 若正确：只输出 why_correct（告诉用户他为什么做对了：抓住了哪些关键点/概念）。
-3) 若错误：输出 correct_answer + explanation（简洁讲清为什么）。
+2) 若正确：只输出 why_correct（告诉用户他为什么做对了）。
+3) 若错误：输出 correct_answer + explanation。
 4) 允许少量扩展解释，但考点必须来自 concept_context。
 JSON schema：
 {
@@ -415,7 +410,7 @@ JSON schema：
   "correct_answer": "string",
   "explanation": "string"
 }
-注意：如果 is_correct=true，correct_answer/explanation 可为空字符串；反之 why_correct 为空字符串。
+注意：正确时 correct_answer/explanation 允许为空；错误时 why_correct 允许为空。
 """
 
     payload = {
@@ -429,32 +424,25 @@ JSON schema：
         }
     }
 
-    try:
-        resp = dashscope.Generation.call(
-            model='qwen-plus',
-            messages=[
-                {'role': Role.SYSTEM, 'content': system_prompt},
-                {'role': Role.USER, 'content': json.dumps(payload, ensure_ascii=False)},
-            ],
-            result_format='message'
-        )
-        if resp.status_code != 200:
-            return None, f"Error: {resp.message}"
+    resp = dashscope.Generation.call(
+        model='qwen-plus',
+        messages=[
+            {'role': Role.SYSTEM, 'content': system_prompt},
+            {'role': Role.USER, 'content': json.dumps(payload, ensure_ascii=False)},
+        ],
+        result_format='message'
+    )
+    if resp.status_code != 200:
+        return None, f"Error: {resp.message}"
 
-        raw = resp.output.choices[0]['message']['content']
-        data = safe_extract_json(raw)
-        if not data or "is_correct" not in data:
-            return None, "Error: 批改 JSON 解析失败"
-        return data, None
-    except Exception as e:
-        return None, str(e)
+    raw = resp.output.choices[0]['message']['content']
+    data = safe_extract_json(raw)
+    if not data or "is_correct" not in data:
+        return None, "Error: 批改 JSON 解析失败"
+    return data, None
 
 def call_qwen_generate_similar_question(concept_id, preferred_type, review_pack, api_key):
-    """
-    为某个错题概念生成“类似题”，用于错题循环。
-    """
     _set_api_key(api_key)
-
     concept_ctx = None
     for c in (review_pack.get("concepts") or []):
         if c.get("id") == concept_id:
@@ -462,17 +450,11 @@ def call_qwen_generate_similar_question(concept_id, preferred_type, review_pack,
             break
     concept_ctx = concept_ctx or {}
 
-    # 错题循环：优先 single（更快反馈），但尊重 preferred_type
     qtype = preferred_type if preferred_type in ["single", "short", "essay"] else "single"
 
     system_prompt = """
 你是一个“错题再训练出题器”。请严格输出 JSON（不要 markdown，不要解释）。
-输入：一个概念上下文 + 题型。
 目标：出一道“同考点、不同问法”的类似题，用于纠错训练。
-要求：
-- 如果 type=single：必须提供 A/B/C/D 和答案字母。
-- 如果 type=short/essay：answer 用要点列表。
-- explanation 给出简洁解析（用于答错时）。
 JSON schema：
 {
   "qid": 999,
@@ -480,7 +462,7 @@ JSON schema：
   "concept_id": "c1",
   "concept_title": "概念标题",
   "stem": "题干",
-  "options": {"A":"...", "B":"...", "C":"...", "D":"..."} ,   // only single
+  "options": {"A":"...", "B":"...", "C":"...", "D":"..."},
   "answer": "A" 或 ["要点1","要点2"],
   "explanation": "解析"
 }
@@ -496,81 +478,63 @@ JSON schema：
         }
     }
 
-    try:
-        resp = dashscope.Generation.call(
-            model='qwen-plus',
-            messages=[
-                {'role': Role.SYSTEM, 'content': system_prompt},
-                {'role': Role.USER, 'content': json.dumps(payload, ensure_ascii=False)},
-            ],
-            result_format='message'
-        )
-        if resp.status_code != 200:
-            return None, f"Error: {resp.message}"
+    resp = dashscope.Generation.call(
+        model='qwen-plus',
+        messages=[
+            {'role': Role.SYSTEM, 'content': system_prompt},
+            {'role': Role.USER, 'content': json.dumps(payload, ensure_ascii=False)},
+        ],
+        result_format='message'
+    )
+    if resp.status_code != 200:
+        return None, f"Error: {resp.message}"
 
-        raw = resp.output.choices[0]['message']['content']
-        data = safe_extract_json(raw)
-        if not data or "stem" not in data:
-            return None, "Error: 类似题 JSON 解析失败"
+    raw = resp.output.choices[0]['message']['content']
+    data = safe_extract_json(raw)
+    if not data or "stem" not in data:
+        return None, "Error: 类似题 JSON 解析失败"
 
-        # 强制绑定概念
-        data["concept_id"] = concept_id
-        data["concept_title"] = concept_ctx.get("title", data.get("concept_title", ""))
-        return data, None
-    except Exception as e:
-        return None, str(e)
+    data["concept_id"] = concept_id
+    data["concept_title"] = concept_ctx.get("title", data.get("concept_title", ""))
+    return data, None
 
 def call_qwen_qa(user_question, review_pack, api_key):
-    """
-    右侧答疑：严格以 concepts 为知识源
-    """
     _set_api_key(api_key)
-
-    # 只取前 25 条概念防止太长
     concepts = (review_pack.get("concepts") or [])[:25]
     ctx = [{"title": c.get("title",""), "explain": c.get("explain",""), "example": c.get("example","")} for c in concepts]
 
     system_prompt = """
-你是一个“复习包内答疑助教”。请基于给定 concepts 内容回答问题。
+你是一个“知识清单内答疑助教”。请基于给定知识清单内容回答问题。
 要求：
-1) 优先引用 concepts 的解释与例子进行回答（可以重述但不要胡编考点）。
-2) 允许少量扩展解释，但不要引入与 concepts 无关的新考点。
-3) 如果用户问到 concepts 未覆盖的内容，坦率说明“复习包未包含”，并建议他补充课件或生成更完整概念。
+1) 优先引用知识清单的解释与例子进行回答。
+2) 允许少量扩展解释，但不要引入与知识清单无关的新考点。
+3) 如果用户问到清单未覆盖内容，说明“知识清单未包含”，并建议补充课件或生成更完整清单。
 """
 
     payload = {"concepts": ctx, "question": user_question}
-
-    try:
-        resp = dashscope.Generation.call(
-            model='qwen-plus',
-            messages=[
-                {'role': Role.SYSTEM, 'content': system_prompt},
-                {'role': Role.USER, 'content': json.dumps(payload, ensure_ascii=False)},
-            ],
-            result_format='message'
-        )
-        if resp.status_code == 200:
-            return resp.output.choices[0]['message']['content']
-        return "Error"
-    except:
-        return "Error"
+    resp = dashscope.Generation.call(
+        model='qwen-plus',
+        messages=[
+            {'role': Role.SYSTEM, 'content': system_prompt},
+            {'role': Role.USER, 'content': json.dumps(payload, ensure_ascii=False)},
+        ],
+        result_format='message'
+    )
+    if resp.status_code == 200:
+        return resp.output.choices[0]['message']['content']
+    return "Error"
 
 # =========================================================
-# [后台预生成：下一组题]
+# [后台预生成：下一组题（前端静默）]
 # =========================================================
-
 def background_generate_next_question_set(api_key: str):
-    """
-    后台线程：生成下一组题并塞进 question_sets。
-    注意：Streamlit 对线程写 session_state 有一定风险，但通常在单用户会话可用。
-    """
     try:
         st.session_state.next_set_generating = True
         st.session_state.next_set_error = ""
 
         pack = st.session_state.review_pack
         if not pack:
-            st.session_state.next_set_error = "复习包不存在，无法生成题组"
+            st.session_state.next_set_error = "复习包不存在"
             return
 
         data, err = call_qwen_generate_question_set(pack, api_key)
@@ -583,22 +547,16 @@ def background_generate_next_question_set(api_key: str):
         st.session_state.next_set_generating = False
 
 def ensure_next_set_async(api_key: str):
-    """
-    如果当前题组缓存少于 1 组，就后台补一组。
-    """
     if st.session_state.next_set_generating:
         return
-    # 目标：始终保证至少 1 组“待用题组”
     if len(st.session_state.question_sets) >= 1:
         return
-
     t = threading.Thread(target=background_generate_next_question_set, args=(api_key,), daemon=True)
     t.start()
 
 # =========================================================
-# [刷题状态机逻辑]
+# [刷题状态机]
 # =========================================================
-
 def quiz_reset():
     st.session_state.quiz = {
         "active": False,
@@ -649,7 +607,6 @@ def build_remedial_queue():
     for cid, meta in wrong.items():
         if meta.get("stuck"):
             continue
-        # 只有未掌握的才需要再考
         if st.session_state.quiz["concept_mastery"].get(cid) is False:
             queue.append(cid)
     st.session_state.quiz["remedial_queue"] = queue
@@ -662,16 +619,14 @@ def move_to_next_question_or_phase():
     if qz["phase"] == "main":
         qz["idx"] += 1
         if qz["idx"] >= len(qz["questions"]):
-            # 主卷结束 -> 进入错题循环
             build_remedial_queue()
             if qz["remedial_queue"]:
                 qz["phase"] = "remedial"
                 qz["idx"] = 0
-                qz["questions"] = []  # remedial 每次动态生成题
+                qz["questions"] = []
             else:
                 qz["active"] = False
     else:
-        # remedial：每次答完会根据 mastery / attempts 决定是否继续
         build_remedial_queue()
         if not qz["remedial_queue"]:
             qz["active"] = False
@@ -685,168 +640,146 @@ def get_concept_snippet(concept_id, review_pack):
 # =========================================================
 # [UI层]
 # =========================================================
-
 with st.sidebar:
-    st.title("🍋 榨知机 V1.5")
+    st.title(UI["SIDEBAR_TITLE"])
 
-    if "DASHSCOPE_API_KEY" in st.secrets:
-        api_key = st.secrets["DASHSCOPE_API_KEY"]
-        st.success("✅ 开发者演示模式")
+    # API Key 来源：secrets / env / 用户输入
+    api_key = st.secrets.get("DASHSCOPE_API_KEY", os.getenv("DASHSCOPE_API_KEY", ""))
+    if api_key:
+        st.success(UI["DEV_MODE"])
     else:
         api_key = st.text_input("API Key", type="password")
 
     st.markdown("---")
 
-    # 工具箱：只在生成后显示
+    # 工具箱：仅生成后显示
     if st.session_state.review_pack:
-        st.markdown("🛠️ 工具箱")
+        st.markdown(UI["TOOLBOX"])
 
-        # 考考我：只负责“开始刷题”，题组秒开来自预生成缓存
-        if st.button("🙋‍♂️ 考考我（10题高频卷）", use_container_width=True):
+        if st.button(UI["QUIZ_BTN"], use_container_width=True):
             if not api_key:
                 st.error("请先配置 API Key")
             elif not st.session_state.question_sets:
-                st.warning("题组尚未预生成完成，稍等或重新点击。")
+                # 生成阶段失败不提示，但点按钮时必须提示，否则用户无反馈
+                st.warning("题组还没准备好，稍等几秒再点一次。")
             else:
-                # 取出一组题并开始刷题
                 qs = st.session_state.question_sets.pop(0)
                 quiz_start_with_set(qs)
-                # 开始刷题后，后台补下一组（保持“永远有一组在本地”）
                 ensure_next_set_async(api_key)
                 st.rerun()
 
-        # Word 下载（仅 concepts）
-        docx_file = generate_word_file_from_concepts(
+        docx_file = generate_word_file_from_markdown(
             st.session_state.course_name,
             st.session_state.result_content
         )
         st.download_button(
-            label="📄 下载 Word（Concepts）",
+            label=UI["DOWNLOAD_BTN"],
             data=docx_file,
-            file_name=f"{st.session_state.course_name}_核心知识清单.docx",
+            file_name=f"{st.session_state.course_name}_知识清单.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             use_container_width=True
         )
 
-        # 预生成状态提示
-        if st.session_state.next_set_generating:
-            st.info("⏳ 正在后台预生成下一组题...")
-        elif st.session_state.next_set_error:
-            st.warning(f"⚠️ 下一组题生成失败：{st.session_state.next_set_error}")
-
         st.markdown("---")
 
-    # 设置区
-    st.markdown("### ⚙️ 复习设置")
-    mode = st.radio("目标：", ("帮我速通！（生成Concepts）", "我是高玩！（也生成Concepts）"), index=0)
-    uploaded_files = st.file_uploader("上传课件 (必需)", type=["pdf"], accept_multiple_files=True)
-    uploaded_exams = st.file_uploader("上传真题 (可选，用于⭐锚点)", type=["pdf"], key="exam")
-    process_btn = st.button("🚀 开始学习", type="primary", use_container_width=True)
+    st.markdown(UI["SETTINGS"])
+    mode = st.radio(UI["GOAL"], (UI["MODE_BEGINNER"], UI["MODE_PRO"]), index=0)
 
-# -------------------------
+    # 上传区中文引导（替代组件内部英文）
+    st.caption(UI["UPLOAD_TIP"])
+    uploaded_files = st.file_uploader(UI["UPLOAD_MAIN"], type=["pdf"], accept_multiple_files=True)
+
+    st.caption(UI["UPLOAD_TIP"])
+    uploaded_exams = st.file_uploader(UI["UPLOAD_EXAM"], type=["pdf"], key="exam")
+
+    process_btn = st.button(UI["START_BTN"], type="primary", use_container_width=True)
+
 # 主界面
-# -------------------------
-st.title("🍋 榨知机 V1.5：Concepts 高频刷题机")
+st.title(UI["MAIN_TITLE"])
 
-# 生成流程
+# 生成流程（静默执行，无 spinner、无那些提示）
 if process_btn and uploaded_files and api_key:
-    with st.spinner("榨知机正在生成 Concepts（并预生成一组高频卷）..."):
-        # 1) 文本提取
-        exam_text = ""
-        if uploaded_exams:
-            try:
-                exam_text = extract_text_from_pdf(uploaded_exams.read())
-            except:
-                exam_text = ""
+    # 1) 文本提取
+    exam_text = ""
+    if uploaded_exams:
+        try:
+            exam_text = extract_text_from_pdf(uploaded_exams.read())
+        except:
+            exam_text = ""
 
-        main_text = ""
-        for file in uploaded_files:
-            bytes_data = file.read()
-            text = extract_text_from_pdf(bytes_data)
-            if len(text) < 50:
-                st.warning(f"检测到 {file.name} 文本过少，启用视觉分析")
-                imgs = pdf_pages_to_base64_images(bytes_data)
-                text = call_qwen_vl_vision(imgs, api_key)
-            main_text += "\n" + text
+    main_text = ""
+    for file in uploaded_files:
+        bytes_data = file.read()
+        text = extract_text_from_pdf(bytes_data)
+        if len(text) < 50:
+            # 仍然做视觉分析，但前端不提示（按你的删除要求）
+            imgs = pdf_pages_to_base64_images(bytes_data)
+            text = call_qwen_vl_vision(imgs, api_key)
+        main_text += "\n" + text
 
-        # 2) 生成 concepts JSON
-        pack, err = call_qwen_generate_concepts_json(main_text, exam_text, api_key)
-        if err or not pack:
-            st.error(f"Concepts 生成失败：{err}")
-        else:
-            st.session_state.review_pack = pack
-            st.session_state.course_name = pack.get("course_name", "通用课程")
-            st.session_state.result_content = concepts_to_markdown(pack)
+    # 2) 生成知识清单
+    pack, err = call_qwen_generate_concepts_json(main_text, exam_text, api_key)
+    if err or not pack:
+        st.error(f"{UI['GEN_FAIL']}{err}")
+    else:
+        st.session_state.review_pack = pack
+        st.session_state.course_name = pack.get("course_name", "通用课程")
+        st.session_state.result_content = concepts_to_markdown(pack)
 
-            # 3) 预生成一组题（备选1：保证“秒开”）
-            qset, qerr = call_qwen_generate_question_set(pack, api_key)
-            if qerr or not qset:
-                st.warning(f"题组预生成失败（仍可答疑/下载）：{qerr}")
-            else:
-                st.session_state.question_sets = [qset]  # 先放 1 组
-                # （可选）立即再后台补一组，让“永远有一组在本地”
-                ensure_next_set_async(api_key)
+        # 3) 预生成一组题（失败静默）
+        qset, qerr = call_qwen_generate_question_set(pack, api_key)
+        if qset:
+            st.session_state.question_sets = [qset]
+            ensure_next_set_async(api_key)
 
-            # 清理答疑记录与刷题状态（生成新包视为新会话）
-            st.session_state.qa_messages = []
-            quiz_reset()
+        st.session_state.qa_messages = []
+        quiz_reset()
+        st.rerun()
 
-            st.rerun()
-
-# -------------------------
-# 展示区：有复习包才解锁
-# -------------------------
+# 有清单才解锁功能
 if st.session_state.review_pack:
-    st.success(f"✅ 《{st.session_state.course_name}》Concepts 已生成！侧边栏可下载/考考我。")
+    st.success(UI["GEN_SUCCESS"].format(course_name=st.session_state.course_name))
 
     col1, col2 = st.columns([6, 4])
 
     with col1:
-        st.subheader("📄 核心知识清单（Concepts）")
+        st.subheader(UI["LEFT_HEADER"])
         st.markdown(st.session_state.result_content)
 
     with col2:
-        st.subheader("🤖 右侧：答疑 / 刷题与批改")
-        tab = st.radio("模式", ("答疑", "刷题与批改"), horizontal=True)
+        st.subheader(UI["RIGHT_HEADER"])
+        tab = st.radio(UI["MODE_SWITCH"], (UI["MODE_QA"], UI["MODE_QUIZ"]), horizontal=True)
 
-        # -------------------------
-        # 答疑模式
-        # -------------------------
-        if tab == "答疑":
+        # 答疑
+        if tab == UI["MODE_QA"]:
             for msg in st.session_state.qa_messages:
                 with st.chat_message(msg["role"]):
                     st.write(msg["content"])
 
-            q = st.chat_input("基于 Concepts 提问…（不会回答 Concepts 未覆盖的新考点）")
+            q = st.chat_input(UI["QA_INPUT"])
             if q:
                 st.session_state.qa_messages.append({"role": "user", "content": q})
                 with st.chat_message("user"):
                     st.write(q)
 
-                with st.spinner("AI 正在基于 Concepts 作答..."):
+                with st.spinner(UI["QA_SPINNER"]):
                     a = call_qwen_qa(q, st.session_state.review_pack, api_key)
 
                 st.session_state.qa_messages.append({"role": "assistant", "content": a})
                 with st.chat_message("assistant"):
                     st.write(a)
 
-        # -------------------------
-        # 刷题与批改模式
-        # -------------------------
+        # 刷题与批改
         else:
             qz = st.session_state.quiz
 
             if not qz["active"]:
-                st.info("点击侧边栏「考考我」开始一组 10 题高频卷。")
-                if not st.session_state.question_sets and st.session_state.next_set_generating:
-                    st.caption("（题组正在后台生成，稍等即可秒开）")
+                st.info(UI["QUIZ_HINT"])
             else:
-                # 如果处于 remedial，需要动态生成当前概念的类似题
                 if qz["phase"] == "remedial":
-                    # 取队列头概念
                     cid = qz["remedial_queue"][0] if qz["remedial_queue"] else None
                     if not cid:
-                        st.success("🎉 错题已全部掌握！本轮结束。")
+                        st.success(UI["REMEDIAL_DONE"])
                         qz["active"] = False
                         st.rerun()
 
@@ -854,66 +787,65 @@ if st.session_state.review_pack:
                     attempts = meta.get("attempts", 0)
 
                     if attempts >= 4:
-                        # 到达上限：标记 stuck，并移出队列
                         meta["stuck"] = True
                         qz["wrong_concepts"][cid] = meta
                         snippet = get_concept_snippet(cid, st.session_state.review_pack)
-                        st.warning("该考点已连续错误达到上限（4次）。建议回看该概念后再挑战。")
+                        st.warning(UI["REMEDIAL_STUCK"])
                         if snippet:
-                            st.markdown("📌 建议回看： " + snippet)
+                            st.markdown(f"{UI['REMEDIAL_REVIEW']} {snippet}")
 
-                        # 移出队列并继续检查
                         qz["remedial_queue"] = [x for x in qz["remedial_queue"] if x != cid]
                         build_remedial_queue()
                         if not qz["remedial_queue"]:
-                            st.success("🎉 错题循环已结束（部分考点需回看后再挑战）。")
+                            st.success(UI["REMEDIAL_END"])
                             qz["active"] = False
                             st.rerun()
                         else:
                             st.rerun()
 
-                    # 生成类似题（每次 rerun 只生成一次：存在 session 中）
                     if "remedial_current_q" not in st.session_state or st.session_state.get("remedial_current_cid") != cid:
-                        with st.spinner("正在为错题考点生成类似题..."):
-                            simq, serr = call_qwen_generate_similar_question(
-                                concept_id=cid,
-                                preferred_type=meta.get("preferred_type", "single"),
-                                review_pack=st.session_state.review_pack,
-                                api_key=api_key
-                            )
+                        simq, serr = call_qwen_generate_similar_question(
+                            concept_id=cid,
+                            preferred_type=meta.get("preferred_type", "single"),
+                            review_pack=st.session_state.review_pack,
+                            api_key=api_key
+                        )
                         if serr or not simq:
-                            st.error(f"类似题生成失败：{serr}")
-                            # 防止卡死：移出该概念
+                            # 失败也静默处理成“跳过该概念”（不额外提示）
                             meta["stuck"] = True
                             qz["wrong_concepts"][cid] = meta
                             qz["remedial_queue"] = [x for x in qz["remedial_queue"] if x != cid]
                             st.rerun()
+
                         st.session_state.remedial_current_q = simq
                         st.session_state.remedial_current_cid = cid
 
                     current_q = st.session_state.remedial_current_q
-                    st.markdown("### 🔁 错题循环（直到掌握）")
-                    st.caption(f"考点：{current_q.get('concept_title','')} ｜ 已错次数：{meta.get('attempts',0)}/4")
+                    st.markdown(UI["REMEDIAL_TITLE"])
+                    st.caption(UI["REMEDIAL_META"].format(
+                        title=current_q.get("concept_title", ""),
+                        n=meta.get("attempts", 0)
+                    ))
+
                 else:
                     current_q = quiz_current_question()
-                    st.markdown("### 📝 高频卷（10题）")
-                    st.caption(f"进度：第 {qz['idx']+1} / {len(qz['questions'])} 题｜题组：{qz.get('current_set_id')}")
-                    st.caption(f"考点：{current_q.get('concept_title','')}")
+                    st.markdown(UI["QUIZ_TITLE"])
+                    st.caption(UI["QUIZ_PROGRESS"].format(
+                        cur=qz["idx"] + 1,
+                        total=len(qz["questions"]),
+                        set_id=qz.get("current_set_id")
+                    ))
+                    st.caption(UI["QUIZ_CONCEPT"].format(title=current_q.get("concept_title", "")))
 
-                # 展示题干
-                st.markdown(f"**题目：** {current_q.get('stem','')}")
-                qtype = current_q.get("type", "single")
+                st.markdown(f"{UI['QUIZ_STEM']} {current_q.get('stem', '')}")
 
-                # 展示上次反馈
                 if qz["last_feedback"]:
                     st.markdown("---")
                     st.markdown(qz["last_feedback"])
                     st.markdown("---")
 
-                # 等待用户点下一题
                 if qz["await_next"]:
-                    if st.button("➡️ 下一题 / 继续", use_container_width=True):
-                        # remedial：答完后清除 current_q 缓存
+                    if st.button(UI["NEXT_BTN"], use_container_width=True):
                         if qz["phase"] == "remedial":
                             if "remedial_current_q" in st.session_state:
                                 del st.session_state.remedial_current_q
@@ -923,75 +855,66 @@ if st.session_state.review_pack:
                         st.rerun()
                     st.stop()
 
-                # ---- 作答区域（单选按钮 / 文本提交） ----
                 def submit_answer(answer_text: str):
-                    with st.spinner("AI 正在批改..."):
-                        grade, gerr = call_qwen_grade_answer(
-                            question=current_q,
-                            user_answer=answer_text,
-                            review_pack=st.session_state.review_pack,
-                            api_key=api_key
-                        )
-
+                    grade, gerr = call_qwen_grade_answer(
+                        question=current_q,
+                        user_answer=answer_text,
+                        review_pack=st.session_state.review_pack,
+                        api_key=api_key
+                    )
                     if gerr or not grade:
-                        qz["last_feedback"] = f"⚠️ 批改失败：{gerr}"
+                        qz["last_feedback"] = f"{UI['GRADE_FAIL']}{gerr}"
                         qz["await_next"] = True
                         return
 
                     is_correct = bool(grade.get("is_correct"))
                     if is_correct:
-                        # 只给 why_correct
-                        why = grade.get("why_correct", "").strip()
-                        qz["last_feedback"] = "✅ **正确**\n\n" + (why if why else "你抓住了关键考点。")
+                        why = (grade.get("why_correct") or "").strip()
+                        qz["last_feedback"] = f"{UI['CORRECT']}\n\n" + (why if why else "你抓住了关键考点。")
                         register_correct_concept(current_q)
 
-                        # remedial：如果该考点答对，则标记 mastery=true 并从队列移除
                         if qz["phase"] == "remedial":
-                            cid = current_q.get("concept_id", "unknown")
-                            qz["concept_mastery"][cid] = True
-                            qz["remedial_queue"] = [x for x in qz["remedial_queue"] if x != cid]
-
+                            cid2 = current_q.get("concept_id", "unknown")
+                            qz["concept_mastery"][cid2] = True
+                            qz["remedial_queue"] = [x for x in qz["remedial_queue"] if x != cid2]
                     else:
-                        ca = grade.get("correct_answer", "").strip()
-                        ex = grade.get("explanation", "").strip()
-                        qz["last_feedback"] = "❌ **错误**\n\n" + (f"**正确答案：** {ca}\n\n" if ca else "") + (ex if ex else "建议回看该概念。")
+                        ca = (grade.get("correct_answer") or "").strip()
+                        ex = (grade.get("explanation") or "").strip()
+                        block = f"{UI['WRONG']}\n\n"
+                        if ca:
+                            block += f"{UI['RIGHT_ANSWER']} {ca}\n\n"
+                        block += ex if ex else UI["SUGGEST_REVIEW"]
+                        qz["last_feedback"] = block
                         register_wrong_concept(current_q)
-
-                        # remedial：错误会保留在队列头，attempts++ 已在 register_wrong_concept 里做
-                        # 但我们要确保 attempts 不会被主卷/错题卷混淆：register_wrong_concept 对 concept 聚合计数
 
                     qz["await_next"] = True
 
+                qtype = current_q.get("type", "single")
                 if qtype == "single":
                     opts = current_q.get("options", {}) or {}
-                    # 四个按钮：ABCD
                     c1, c2 = st.columns(2)
                     with c1:
                         if st.button(f"A. {opts.get('A','')}", use_container_width=True):
-                            submit_answer("A")
-                            st.rerun()
+                            submit_answer("A"); st.rerun()
                         if st.button(f"C. {opts.get('C','')}", use_container_width=True):
-                            submit_answer("C")
-                            st.rerun()
+                            submit_answer("C"); st.rerun()
                     with c2:
                         if st.button(f"B. {opts.get('B','')}", use_container_width=True):
-                            submit_answer("B")
-                            st.rerun()
+                            submit_answer("B"); st.rerun()
                         if st.button(f"D. {opts.get('D','')}", use_container_width=True):
-                            submit_answer("D")
-                            st.rerun()
-
+                            submit_answer("D"); st.rerun()
                 else:
-                    user_text = st.text_area("请输入你的答案：", height=120, placeholder="简答/论述：写要点即可，越结构化越好。")
-                    if st.button("✅ 提交答案", use_container_width=True):
+                    user_text = st.text_area(
+                        UI["TEXTAREA_LABEL"],
+                        height=120,
+                        placeholder=UI["TEXTAREA_PLACEHOLDER"]
+                    )
+                    if st.button(UI["SUBMIT_BTN"], use_container_width=True):
                         if not user_text.strip():
-                            st.warning("请先输入答案。")
+                            st.warning(UI["NEED_INPUT"])
                         else:
                             submit_answer(user_text.strip())
                             st.rerun()
 
-# -------------------------
-# 未生成时：只提示（砍掉伴读）
-# -------------------------
 else:
-    st.info("👈 请先在左侧上传课件并点击「开始学习」。生成 Concepts 后才会解锁：下载 / 高频刷题 / 答疑。")
+    st.info(UI["EMPTY_HINT"])
