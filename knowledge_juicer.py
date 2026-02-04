@@ -129,6 +129,9 @@ def init_state():
     if "course_name" not in st.session_state:
         st.session_state.course_name = "通用课程"
 
+    if "run_generation" not in st.session_state:
+        st.session_state.run_generation = False
+
     # review_pack：结构化知识清单（像“榨出来的果汁配方”）
     if "review_pack" not in st.session_state:
         st.session_state.review_pack = None  # dict
@@ -823,6 +826,12 @@ def get_concept_snippet(concept_id: str, review_pack: dict) -> str:
             return f"**{c.get('title','')}**：{c.get('explain','')}"
     return ""
 
+def request_generation():
+    # 这一步非常轻：只改状态，不做重活
+    st.session_state.is_generating = True
+    st.session_state.run_generation = True
+    st.rerun()
+
 
 # =========================================================
 # [UI层]
@@ -881,13 +890,14 @@ with st.sidebar:
     st.caption(UI["UPLOAD_TIP"])
     uploaded_exams = st.file_uploader(UI["UPLOAD_EXAM"], type=["pdf"], key="exam")
 
-    # 开始学习按钮：生成中禁用，防止用户重复点击
-    process_btn = st.button(
-        UI["START_BTN"],
-        type="primary",
-        use_container_width=True,
-        disabled = st.session_state.is_generating or (st.session_state.review_pack is not None)
-    )
+    
+    st.button(
+    UI["START_BTN"],
+    type="primary",
+    use_container_width=True,
+    disabled=st.session_state.is_generating or (st.session_state.review_pack is not None),
+    on_click=request_generation
+)
 
 # 主界面
 st.title(UI["MAIN_TITLE"])
@@ -898,74 +908,25 @@ status_line = st.empty()
 # =========================================================
 # 生成流程：一行等待提示 + 禁用按钮 + 真流式（仅更新进度行）
 # =========================================================
-if process_btn and uploaded_files and api_key and (not st.session_state.is_generating):
-    st.session_state.is_generating = True
-
-    # 初始等待提示（你指定文案）
+if st.session_state.run_generation:
+    # 进来就先把等待提示亮出来（此时 UI 已经更新过一次了）
     status_line.info(UI["WAIT_LINE"])
 
     try:
-        # 1) 提取文本（静默，不显示你标记删除的提示）
-        exam_text = ""
-        if uploaded_exams:
-            try:
-                exam_text = extract_text_from_pdf(uploaded_exams.read())
-            except:
-                exam_text = ""
-
-        main_text = ""
-        for file in uploaded_files:
-            bytes_data = file.read()
-            text = extract_text_from_pdf(bytes_data)
-            if len(text) < 50:
-                # 仍执行视觉分析，但不提示
-                imgs = pdf_pages_to_base64_images(bytes_data)
-                text = call_qwen_vl_vision(imgs, api_key)
-            main_text += "\n" + text
-
-        # 2) 真流式生成（仅进度行）
-        def on_progress(n_chars: int):
-            status_line.info(f"{UI['WAIT_LINE']}（已接收 {n_chars} 字）")
-
-        raw_text, stream_err = call_qwen_generate_concepts_json_stream(
-            main_text=main_text,
-            exam_text=exam_text,
-            api_key=api_key,
-            mode_str=mode,        # ✅ 0基础/高玩的分叉入口
-            on_progress=on_progress
-        )
-        if stream_err or not raw_text.strip():
-            st.error(f"{UI['GEN_FAIL']}{stream_err or '生成失败'}")
-            raise RuntimeError("stream_failed")
-
-        # 3) 解析 + 打分排序
-        data = safe_extract_json(raw_text)
-        if not data:
-            st.error(f"{UI['GEN_FAIL']}JSON 解析失败")
-            raise RuntimeError("json_failed")
-
-        pack, perr = postprocess_concepts_json(data, exam_text)
-        if perr or not pack:
-            st.error(f"{UI['GEN_FAIL']}{perr or '处理失败'}")
-            raise RuntimeError("postprocess_failed")
-
-        # 4) 写入 session
-        st.session_state.review_pack = pack
-        st.session_state.course_name = pack.get("course_name", "通用课程")
-        st.session_state.result_content = concepts_to_markdown(pack)
-
-        # 5) 预生成一组题（失败静默）
-        qset, _ = call_qwen_generate_question_set(pack, api_key, mode_str=mode)
-        if qset:
-            st.session_state.question_sets = [qset]
-            ensure_next_set_async(api_key)
-
-        st.session_state.qa_messages = []
-        quiz_reset()
-
-        # 清掉状态行（避免多余提示）
+        # ====== 这里放你原来的重活（PDF提取 + 流式生成 + 解析 + 写入session） ======
+        # 重要：生成完成后 st.session_state.review_pack 会被赋值
+        # ================================================
+        ...
+        st.session_state.run_generation = False
+        st.session_state.is_generating = False
         status_line.empty()
+        st.rerun()
 
+    except Exception as e:
+        st.session_state.run_generation = False
+        st.session_state.is_generating = False
+        st.error(f"{UI['GEN_FAIL']}{e}")
+        status_line.empty()
         st.rerun()
 
     finally:
@@ -1162,6 +1123,6 @@ if st.session_state.review_pack:
 
 
 else:
-    # 只有在“既没生成，也没在生成中”时才提示
-    if not st.session_state.is_generating:
+    # 未生成 && 未在生成中 才显示
+    if (not st.session_state.is_generating) and (not st.session_state.run_generation):
         st.info(UI["EMPTY_HINT"])
