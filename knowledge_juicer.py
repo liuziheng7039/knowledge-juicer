@@ -886,7 +886,7 @@ with st.sidebar:
         UI["START_BTN"],
         type="primary",
         use_container_width=True,
-        disabled=st.session_state.is_generating
+        disabled = st.session_state.is_generating or (st.session_state.review_pack is not None)
     )
 
 # 主界面
@@ -1160,5 +1160,8 @@ if st.session_state.review_pack:
                             submit_answer(user_text.strip())
                             st.rerun()
 
+
 else:
-    st.info(UI["EMPTY_HINT"])
+    # 只有在“既没生成，也没在生成中”时才提示
+    if not st.session_state.is_generating:
+        st.info(UI["EMPTY_HINT"])
