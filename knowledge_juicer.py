@@ -376,7 +376,7 @@ JSON schema（必须严格遵守）：
       "id": "c1",
       "title": "概念/考点标题（短）",
       "explain": "一句话到三句话解释（清晰、可背）",
-      "example": "一个实际例子（短）",
+      "example": "一个实际例子（贴合生活，越通俗越好）",
       "is_star": true/false,
       "model_score": 0-100
     }}
@@ -771,10 +771,17 @@ def background_generate_next_question_set(api_key: str):
         mode_str = st.session_state.get("study_mode", UI["MODE_BEGINNER"])
         data, err = call_qwen_generate_question_set(pack, api_key, mode_str)
         if err:
-            st.session_state.next_set_error = err
+            st.session_state.next_set_error = f"API调用失败: {err}"
+            return
+        
+        if not data:
+            st.session_state.next_set_error = "生成的题组为空"
             return
 
         st.session_state.question_sets.append(data)
+        st.session_state.next_set_error = "✅ 题组生成成功"
+    except Exception as e:
+        st.session_state.next_set_error = f"后台生成异常: {str(e)}"
     finally:
         st.session_state.next_set_generating = False
 
@@ -1111,10 +1118,21 @@ if st.session_state.run_generation:
         
         # 清理进度显示
         progress_container.empty()
-        status_container.empty()
 
-        # 启动后台生成第一组题
-        ensure_next_set_async(api_key)
+        # 立即在前台生成第一组题（更可靠）
+        status_container.info("正在准备题目...")
+        try:
+            mode_str = st.session_state.study_mode
+            first_set, set_err = call_qwen_generate_question_set(pack, api_key, mode_str)
+            if set_err:
+                st.session_state.next_set_error = f"题组生成失败: {set_err}"
+            elif first_set:
+                st.session_state.question_sets.append(first_set)
+                st.session_state.next_set_error = "✅ 题组准备完毕"
+        except Exception as e:
+            st.session_state.next_set_error = f"题组生成异常: {str(e)}"
+        
+        status_container.empty()
 
         # 重置生成状态
         st.session_state.run_generation = False
