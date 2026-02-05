@@ -356,7 +356,7 @@ def _concepts_system_prompt(mode_str: str) -> str:
     beginner = is_beginner_mode(mode_str)
 
     # 不同模式下的知识点数量要求
-    n_req = "20-36" if beginner else "12-24"
+    n_req = "20-30" if beginner else "12-18"
     
     # 不同模式下的解释风格
     style_req = (
@@ -376,7 +376,7 @@ JSON schema（必须严格遵守）：
       "id": "c1",
       "title": "概念/考点标题（短）",
       "explain": "一句话到三句话解释（清晰、可背）",
-      "example": "一个实际例子（贴合生活，越通俗越好）",
+      "example": "一个实际例子（短）",
       "is_star": true/false,
       "model_score": 0-100
     }}
@@ -915,7 +915,16 @@ with st.sidebar:
             if not api_key:
                 st.error("请先配置 API Key")
             elif not st.session_state.question_sets:
-                st.warning("题组还没准备好，稍等几秒再点一次。")
+                # 显示详细的错误信息
+                if st.session_state.next_set_error:
+                    st.error(f"题组生成失败：{st.session_state.next_set_error}")
+                    st.info("💡 可以尝试：\n1. 刷新页面重新生成知识清单\n2. 检查 API Key 是否有效\n3. 稍等片刻再试")
+                elif st.session_state.next_set_generating:
+                    st.info("⏳ 题组正在后台生成中，请稍等几秒...")
+                else:
+                    st.warning("题组还没准备好，点击此按钮会立即开始生成")
+                    # 立即启动生成
+                    ensure_next_set_async(api_key)
             else:
                 qs = st.session_state.question_sets.pop(0)
                 quiz_start_with_set(qs)
@@ -936,6 +945,14 @@ with st.sidebar:
         )
 
         st.markdown("---")
+
+        # 调试信息（可选显示）
+        with st.expander("🔍 调试信息"):
+            st.write(f"题库数量：{len(st.session_state.question_sets)}")
+            st.write(f"后台生成中：{st.session_state.next_set_generating}")
+            if st.session_state.next_set_error:
+                st.error(f"生成错误：{st.session_state.next_set_error}")
+            st.write(f"知识点数量：{len(st.session_state.review_pack.get('concepts', []))}")
 
     # 设置区域
     st.markdown(UI["SETTINGS"])
