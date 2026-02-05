@@ -826,11 +826,6 @@ def get_concept_snippet(concept_id: str, review_pack: dict) -> str:
             return f"**{c.get('title','')}**：{c.get('explain','')}"
     return ""
 
-def request_generation():
-    #只改状态，不主动 rerun。因为点击按钮后 Streamlit 本身就会触发一次 rerun。
-    st.session_state.is_generating = True
-    st.session_state.run_generation = True
-
 
 # =========================================================
 # [UI层]
@@ -890,13 +885,14 @@ with st.sidebar:
     uploaded_exams = st.file_uploader(UI["UPLOAD_EXAM"], type=["pdf"], key="exam")
 
     
-    st.button(
+    start_clicked = st.button(
     UI["START_BTN"],
     type="primary",
     use_container_width=True,
     disabled=st.session_state.is_generating or (st.session_state.review_pack is not None),
-    on_click=request_generation
+    key="start_learning_btn"
 )
+
 
 # 主界面
 st.title(UI["MAIN_TITLE"])
@@ -909,6 +905,13 @@ st.caption(f"debug: run_generation={st.session_state.run_generation}, is_generat
 # =========================================================
 # 生成流程：一行等待提示 + 禁用按钮 + 真流式（仅更新进度行）
 # =========================================================
+# ✅ 第一步：捕获“开始学习”点击（不用 on_click，最稳）
+if start_clicked:
+    # 只改状态，不做重活
+    st.session_state.is_generating = True
+    st.session_state.run_generation = True
+    st.rerun()  # 立刻刷新 UI：按钮锁死、隐藏 EMPTY_HINT、出现等待行
+
 if st.session_state.run_generation:
     # 进来就先把等待提示亮出来（此时 UI 已经更新过一次了）
     status_line.info(UI["WAIT_LINE"])
