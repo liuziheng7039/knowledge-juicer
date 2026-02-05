@@ -827,10 +827,9 @@ def get_concept_snippet(concept_id: str, review_pack: dict) -> str:
     return ""
 
 def request_generation():
-    # 这一步非常轻：只改状态，不做重活
+    #只改状态，不主动 rerun。因为点击按钮后 Streamlit 本身就会触发一次 rerun。
     st.session_state.is_generating = True
     st.session_state.run_generation = True
-    st.rerun()
 
 
 # =========================================================
@@ -905,6 +904,8 @@ st.title(UI["MAIN_TITLE"])
 # 一行状态占位（你选 2.1：只显示一行进度）
 status_line = st.empty()
 
+st.caption(f"debug: run_generation={st.session_state.run_generation}, is_generating={st.session_state.is_generating}, has_pack={st.session_state.review_pack is not None}")
+
 # =========================================================
 # 生成流程：一行等待提示 + 禁用按钮 + 真流式（仅更新进度行）
 # =========================================================
@@ -923,11 +924,13 @@ if st.session_state.run_generation:
         st.rerun()
 
     except Exception as e:
+    # 失败：解锁按钮，让用户能重试，同时把错误留在页面上
         st.session_state.run_generation = False
         st.session_state.is_generating = False
-        st.error(f"{UI['GEN_FAIL']}{e}")
         status_line.empty()
-        st.rerun()
+        st.error(f"{UI['GEN_FAIL']}{e}")
+        st.stop()   # ✅ 不要 rerun，避免把错误刷没
+
 
     finally:
         st.session_state.is_generating = False
