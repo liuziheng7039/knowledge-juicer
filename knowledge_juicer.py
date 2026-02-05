@@ -32,9 +32,9 @@ import os
 # =========================================================
 UI = {
     # 页面标题
-    "PAGE_TITLE": "榨知机 V1.5",
-    "SIDEBAR_TITLE": "🍋 榨知机 V1.5",
-    "MAIN_TITLE": "🍋 榨知机 V1.5：你的期末救星",
+    "PAGE_TITLE": "榨知机 V1.6",
+    "SIDEBAR_TITLE": "🍋 榨知机 V1.6",
+    "MAIN_TITLE": "🍋 榨知机 V1.6：你的期末救星",
 
     # 开发者模式提示
     "DEV_MODE": "✅ 开发者演示模式",
@@ -177,9 +177,7 @@ def init_state():
     if "question_sets" not in st.session_state:
         st.session_state.question_sets = []
 
-    # 后台生成下一组题的状态
-    if "next_set_generating" not in st.session_state:
-        st.session_state.next_set_generating = False
+    # 题组生成错误记录
     if "next_set_error" not in st.session_state:
         st.session_state.next_set_error = ""
 
@@ -204,6 +202,7 @@ def init_state():
             "concept_mastery": {},        # 记录每个考点是否已掌握
             "remedial_queue": [],         # 错题循环队列
             "current_set_id": None,       # 当前题组 ID
+            "needs_prepare_next": False,  # 是否需要准备下一组题
         }
 
 
@@ -762,57 +761,6 @@ def call_qwen_qa(user_question: str, review_pack: dict, api_key: str):
 
 
 # =========================================================
-# 后台任务：提前生成下一组题
-# =========================================================
-def background_generate_next_question_set(api_key: str, review_pack: dict, study_mode: str):
-    """
-    在后台偷偷生成下一组题
-    用户感知不到，点"考考我"时秒开
-    """
-    try:
-        st.session_state.next_set_generating = True
-        st.session_state.next_set_error = ""
-
-        if not review_pack:
-            st.session_state.next_set_error = "empty_pack"
-            return
-
-        data, err = call_qwen_generate_question_set(review_pack, api_key, study_mode)
-        if err:
-            st.session_state.next_set_error = f"api_error:{err}"
-            return
-        
-        if not data:
-            st.session_state.next_set_error = "empty_data"
-            return
-
-        st.session_state.question_sets.append(data)
-        st.session_state.next_set_error = ""  # 清空错误
-    except Exception as e:
-        st.session_state.next_set_error = f"exception:{str(e)}"
-    finally:
-        st.session_state.next_set_generating = False
-
-
-def ensure_next_set_async(api_key: str, review_pack: dict, study_mode: str):
-    """
-    检查题库，如果没题了就启动后台生成
-    保证至少有 1 套题可用
-    """
-    if st.session_state.next_set_generating:
-        return
-    if len(st.session_state.question_sets) >= 1:
-        return
-    # 传递必要的参数，避免线程访问 session_state 出问题
-    t = threading.Thread(
-        target=background_generate_next_question_set, 
-        args=(api_key, review_pack, study_mode), 
-        daemon=True
-    )
-    t.start()
-
-
-# =========================================================
 # 刷题状态机
 # =========================================================
 def quiz_reset():
@@ -828,6 +776,7 @@ def quiz_reset():
         "concept_mastery": {},
         "remedial_queue": [],
         "current_set_id": None,
+        "needs_prepare_next": False,
     }
 
 
@@ -890,6 +839,10 @@ def move_to_next_question_or_phase():
     if qz["phase"] == "main":
         qz["idx"] += 1
         if qz["idx"] >= len(qz["questions"]):
+            # 主卷做完了，准备进入错题循环或结束
+            # 这时候偷偷生成下一组题（无论有没有错题）
+            qz["needs_prepare_next"] = True  # 标记需要准备下一组题
+            
             build_remedial_queue()
             if qz["remedial_queue"]:
                 qz["phase"] = "remedial"
@@ -935,44 +888,18 @@ with st.sidebar:
         
         if quiz_btn_clicked:
             if not api_key:
-                st.error("😅 系统配置有点问题，请稍后再试")
-            elif st.session_state.next_set_generating:
-                # 正在生成中
-                st.info("⏳ 题目正在准备中，5秒后自动刷新！")
-                time.sleep(5)
-                st.rerun()
-            elif not st.session_state.question_sets and st.session_state.next_set_error:
-                # 生成失败了
-                st.warning("😅 准备题目时出了点小问题")
-                if st.button("🔄 重新准备题目", use_container_width=True):
-                    ensure_next_set_async(
-                        api_key, 
-                        st.session_state.review_pack, 
-                        st.session_state.study_mode
-                    )
-                    st.info("⏳ 正在准备，5秒后刷新...")
-                    time.sleep(5)
-                    st.rerun()
+                st.error("ERROR_CODE: SYS_001 - 系统配置缺失")
             elif not st.session_state.question_sets:
-                # 还没开始生成（不太可能，但保险起见）
-                st.info("⏳ 题目正在准备中，请稍等几秒...")
-                ensure_next_set_async(
-                    api_key, 
-                    st.session_state.review_pack, 
-                    st.session_state.study_mode
-                )
-                time.sleep(5)
-                st.rerun()
+                # 有错误信息：显示错误码
+                if st.session_state.next_set_error:
+                    st.error(f"ERROR_CODE: {st.session_state.next_set_error}")
+                else:
+                    # 不太可能，但保险起见
+                    st.warning("😅 题目还在准备中，请稍等片刻再试")
             else:
                 # 有题了，开始刷题
                 qs = st.session_state.question_sets.pop(0)
                 quiz_start_with_set(qs)
-                # 立即准备下一组
-                ensure_next_set_async(
-                    api_key, 
-                    st.session_state.review_pack, 
-                    st.session_state.study_mode
-                )
                 st.rerun()
 
         # 下载按钮
@@ -1061,7 +988,7 @@ if st.session_state.run_generation:
             st.session_state.is_generating = False
             progress_container.empty()
             status_container.empty()
-            st.error("未能从 PDF 中提取到足够内容，请检查文件")
+            st.error("ERROR_CODE: PDF_EXT_001 - 未能从 PDF 中提取到足够内容")
             st.stop()
 
         # 提取真题文字（如果有）
@@ -1077,25 +1004,27 @@ if st.session_state.run_generation:
                     exam_ocr = call_qwen_vl_vision(exam_images, api_key)
                     exam_text += "\n" + exam_ocr
 
-        # 流式生成知识清单
+        # ========================================
+        # 阶段1：流式生成知识清单 (0-70%)
+        # ========================================
         target_length = 5000  # 预估目标长度
         
         def update_progress(current_len):
-            """更新进度条的回调函数"""
-            percentage = min(int((current_len / target_length) * 100), 100)
+            """更新进度条的回调函数（只到70%）"""
+            percentage = min(int((current_len / target_length) * 70), 70)
             progress_bar.progress(percentage)
             
             # 计算预计剩余时间
-            if percentage < 30:
+            if percentage < 20:
                 time_left = 2
-            elif percentage < 60:
+            elif percentage < 50:
                 time_left = 1
             else:
                 time_left = 0.5
             
             status_text.text(f"{UI['GEN_PROGRESS']} {percentage}% | {UI['GEN_ESTIMATE'].format(time=int(time_left))}")
 
-        # 调用 AI 生成
+        # 调用 AI 生成知识清单
         raw_json, err = call_qwen_generate_concepts_json_stream(
             main_text=main_text,
             exam_text=exam_text,
@@ -1109,7 +1038,7 @@ if st.session_state.run_generation:
             st.session_state.is_generating = False
             progress_container.empty()
             status_container.empty()
-            st.error(f"{UI['GEN_FAIL']}{err}")
+            st.error(f"ERROR_CODE: KC_GEN_001 - {err}")
             st.stop()
 
         # 解析 JSON
@@ -1119,7 +1048,7 @@ if st.session_state.run_generation:
             st.session_state.is_generating = False
             progress_container.empty()
             status_container.empty()
-            st.error(f"{UI['GEN_FAIL']}无法解析 AI 返回的 JSON")
+            st.error(f"ERROR_CODE: KC_GEN_002 - 无法解析 AI 返回的 JSON")
             st.stop()
 
         # 后处理（计算评分、排序）
@@ -1129,15 +1058,56 @@ if st.session_state.run_generation:
             st.session_state.is_generating = False
             progress_container.empty()
             status_container.empty()
-            st.error(f"{UI['GEN_FAIL']}{post_err}")
+            st.error(f"ERROR_CODE: KC_GEN_003 - {post_err}")
             st.stop()
 
-        # 保存到状态
+        # 保存知识清单到状态
         st.session_state.review_pack = pack
         st.session_state.course_name = pack.get("course_name", "通用课程")
         st.session_state.result_content = concepts_to_markdown(pack)
 
-        # 显示完成动画
+        # ========================================
+        # 阶段2：偷偷生成第一组题 (70-100%)
+        # ========================================
+        # 记录开始时间，用于动态调整进度条速度
+        import time as time_module
+        stage2_start = time_module.time()
+        
+        # 启动题组生成（异步，但我们会等它完成）
+        mode_str = st.session_state.study_mode
+        first_set, set_err = call_qwen_generate_question_set(pack, api_key, mode_str)
+        
+        stage2_duration = time_module.time() - stage2_start
+        
+        # 根据实际耗时调整进度条速度
+        if stage2_duration < 3:
+            # 太快了，强制延迟到 3 秒让进度条看起来真实
+            remaining_time = 3 - stage2_duration
+            steps = 30  # 从 70% 到 100%
+            delay_per_step = remaining_time / steps
+        else:
+            # 已经够慢了，快速走完进度条
+            delay_per_step = 0.05
+        
+        # 平滑推进进度条 70% → 100%
+        for i in range(71, 101):
+            progress_bar.progress(i)
+            time_left = max(0, int((100 - i) * delay_per_step / 60))  # 转成分钟
+            status_text.text(f"{UI['GEN_PROGRESS']} {i}% | {UI['GEN_ESTIMATE'].format(time=time_left if time_left > 0 else 0.5)}")
+            time.sleep(delay_per_step)
+        
+        # 处理题组生成结果
+        if set_err:
+            st.session_state.next_set_error = f"QS_GEN_001 - {set_err}"
+        elif not first_set:
+            st.session_state.next_set_error = "QS_GEN_002 - 生成的题组为空"
+        else:
+            st.session_state.question_sets.append(first_set)
+            st.session_state.next_set_error = ""  # 清空错误
+        
+        # ========================================
+        # 完成动画
+        # ========================================
         progress_bar.progress(100)
         status_text.text("")
         
@@ -1148,13 +1118,6 @@ if st.session_state.run_generation:
         # 清理进度显示
         progress_container.empty()
         status_container.empty()
-
-        # 启动后台生成第一组题（偷偷进行，用户无感知）
-        ensure_next_set_async(
-            api_key, 
-            st.session_state.review_pack, 
-            st.session_state.study_mode
-        )
 
         # 重置生成状态
         st.session_state.run_generation = False
@@ -1221,6 +1184,33 @@ if st.session_state.review_pack:
         # -------------------------
         else:
             qz = st.session_state.quiz
+
+            # 检查是否需要生成下一组题（主卷做完后触发）
+            if qz.get("needs_prepare_next", False):
+                qz["needs_prepare_next"] = False  # 清除标记
+                
+                # 显示"正在整理错题"掩护生成过程
+                with st.spinner("正在整理错题，马上开始..."):
+                    # 偷偷生成下一组题
+                    pack = st.session_state.review_pack
+                    mode_str = st.session_state.study_mode
+                    
+                    next_set, next_err = call_qwen_generate_question_set(pack, api_key, mode_str)
+                    
+                    if next_err:
+                        # 静默记录错误，不影响当前错题循环
+                        st.session_state.next_set_error = f"QS_GEN_003 - {next_err}"
+                    elif not next_set:
+                        st.session_state.next_set_error = "QS_GEN_004 - 生成的题组为空"
+                    else:
+                        st.session_state.question_sets.append(next_set)
+                        st.session_state.next_set_error = ""
+                    
+                    # 确保至少显示 3 秒，让用户感觉在认真整理
+                    time.sleep(max(0, 3))
+                
+                # 整理完毕，继续刷题
+                st.rerun()
 
             if not qz["active"]:
                 st.info(UI["QUIZ_HINT"])
