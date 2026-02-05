@@ -359,11 +359,21 @@ def _concepts_system_prompt(mode_str: str) -> str:
     n_req = "20-30" if beginner else "12-18"
     
     # 不同模式下的解释风格
-    style_req = (
-        "解释要非常白话、分步骤、像给0基础同学讲；每条尽量提供可类比的生活/直观例子。"
-        if beginner else
-        "解释要短、考点化、像高分笔记；例子可以更抽象但必须直击考点。"
-    )
+    if beginner:
+        style_req = """
+解释要求：
+- 用大白话，像给朋友讲故事一样
+- 分步骤，一步步说清楚
+- 例子必须来自日常生活：比如买菜、坐地铁、刷抖音、点外卖、打游戏等
+- 避免抽象概念，多用"就像..."、"好比..."这样的比喻
+"""
+    else:
+        style_req = """
+解释要求：
+- 简洁有力，直击考点
+- 例子可以更专业，但要实用、能记住
+- 例子要能帮助快速回忆考点
+"""
 
     return f"""
 你是一个"复习包结构化生成器"。请基于用户课件与（可选）真题，输出严格 JSON（不要 markdown，不要解释）。
@@ -376,7 +386,7 @@ JSON schema（必须严格遵守）：
       "id": "c1",
       "title": "概念/考点标题（短）",
       "explain": "一句话到三句话解释（清晰、可背）",
-      "example": "一个实际例子（贴合生活，越通俗越好）",
+      "example": "一个实际例子（短）",
       "is_star": true/false,
       "model_score": 0-100
     }}
@@ -754,39 +764,37 @@ def call_qwen_qa(user_question: str, review_pack: dict, api_key: str):
 # =========================================================
 # 后台任务：提前生成下一组题
 # =========================================================
-def background_generate_next_question_set(api_key: str):
+def background_generate_next_question_set(api_key: str, review_pack: dict, study_mode: str):
     """
-    在后台默默生成下一组题
-    保证用户点"考考我"时立刻有题可做
+    在后台偷偷生成下一组题
+    用户感知不到，点"考考我"时秒开
     """
     try:
         st.session_state.next_set_generating = True
         st.session_state.next_set_error = ""
 
-        pack = st.session_state.review_pack
-        if not pack:
-            st.session_state.next_set_error = "知识清单不存在"
+        if not review_pack:
+            st.session_state.next_set_error = "empty_pack"
             return
 
-        mode_str = st.session_state.get("study_mode", UI["MODE_BEGINNER"])
-        data, err = call_qwen_generate_question_set(pack, api_key, mode_str)
+        data, err = call_qwen_generate_question_set(review_pack, api_key, study_mode)
         if err:
-            st.session_state.next_set_error = f"API调用失败: {err}"
+            st.session_state.next_set_error = f"api_error:{err}"
             return
         
         if not data:
-            st.session_state.next_set_error = "生成的题组为空"
+            st.session_state.next_set_error = "empty_data"
             return
 
         st.session_state.question_sets.append(data)
-        st.session_state.next_set_error = "✅ 题组生成成功"
+        st.session_state.next_set_error = ""  # 清空错误
     except Exception as e:
-        st.session_state.next_set_error = f"后台生成异常: {str(e)}"
+        st.session_state.next_set_error = f"exception:{str(e)}"
     finally:
         st.session_state.next_set_generating = False
 
 
-def ensure_next_set_async(api_key: str):
+def ensure_next_set_async(api_key: str, review_pack: dict, study_mode: str):
     """
     检查题库，如果没题了就启动后台生成
     保证至少有 1 套题可用
@@ -795,7 +803,12 @@ def ensure_next_set_async(api_key: str):
         return
     if len(st.session_state.question_sets) >= 1:
         return
-    t = threading.Thread(target=background_generate_next_question_set, args=(api_key,), daemon=True)
+    # 传递必要的参数，避免线程访问 session_state 出问题
+    t = threading.Thread(
+        target=background_generate_next_question_set, 
+        args=(api_key, review_pack, study_mode), 
+        daemon=True
+    )
     t.start()
 
 
@@ -918,24 +931,48 @@ with st.sidebar:
         st.markdown(UI["TOOLBOX"])
 
         # 考考我按钮
-        if st.button(UI["QUIZ_BTN"], use_container_width=True):
+        quiz_btn_clicked = st.button(UI["QUIZ_BTN"], use_container_width=True)
+        
+        if quiz_btn_clicked:
             if not api_key:
-                st.error("请先配置 API Key")
+                st.error("😅 系统配置有点问题，请稍后再试")
+            elif st.session_state.next_set_generating:
+                # 正在生成中
+                st.info("⏳ 题目正在准备中，5秒后自动刷新！")
+                time.sleep(5)
+                st.rerun()
+            elif not st.session_state.question_sets and st.session_state.next_set_error:
+                # 生成失败了
+                st.warning("😅 准备题目时出了点小问题")
+                if st.button("🔄 重新准备题目", use_container_width=True):
+                    ensure_next_set_async(
+                        api_key, 
+                        st.session_state.review_pack, 
+                        st.session_state.study_mode
+                    )
+                    st.info("⏳ 正在准备，5秒后刷新...")
+                    time.sleep(5)
+                    st.rerun()
             elif not st.session_state.question_sets:
-                # 显示详细的错误信息
-                if st.session_state.next_set_error:
-                    st.error(f"题组生成失败：{st.session_state.next_set_error}")
-                    st.info("💡 可以尝试：\n1. 刷新页面重新生成知识清单\n2. 检查 API Key 是否有效\n3. 稍等片刻再试")
-                elif st.session_state.next_set_generating:
-                    st.info("⏳ 题组正在后台生成中，请稍等几秒...")
-                else:
-                    st.warning("题组还没准备好，点击此按钮会立即开始生成")
-                    # 立即启动生成
-                    ensure_next_set_async(api_key)
+                # 还没开始生成（不太可能，但保险起见）
+                st.info("⏳ 题目正在准备中，请稍等几秒...")
+                ensure_next_set_async(
+                    api_key, 
+                    st.session_state.review_pack, 
+                    st.session_state.study_mode
+                )
+                time.sleep(5)
+                st.rerun()
             else:
+                # 有题了，开始刷题
                 qs = st.session_state.question_sets.pop(0)
                 quiz_start_with_set(qs)
-                ensure_next_set_async(api_key)
+                # 立即准备下一组
+                ensure_next_set_async(
+                    api_key, 
+                    st.session_state.review_pack, 
+                    st.session_state.study_mode
+                )
                 st.rerun()
 
         # 下载按钮
@@ -952,14 +989,6 @@ with st.sidebar:
         )
 
         st.markdown("---")
-
-        # 调试信息（可选显示）
-        with st.expander("🔍 调试信息"):
-            st.write(f"题库数量：{len(st.session_state.question_sets)}")
-            st.write(f"后台生成中：{st.session_state.next_set_generating}")
-            if st.session_state.next_set_error:
-                st.error(f"生成错误：{st.session_state.next_set_error}")
-            st.write(f"知识点数量：{len(st.session_state.review_pack.get('concepts', []))}")
 
     # 设置区域
     st.markdown(UI["SETTINGS"])
@@ -1118,21 +1147,14 @@ if st.session_state.run_generation:
         
         # 清理进度显示
         progress_container.empty()
-
-        # 立即在前台生成第一组题（更可靠）
-        status_container.info("正在准备题目...")
-        try:
-            mode_str = st.session_state.study_mode
-            first_set, set_err = call_qwen_generate_question_set(pack, api_key, mode_str)
-            if set_err:
-                st.session_state.next_set_error = f"题组生成失败: {set_err}"
-            elif first_set:
-                st.session_state.question_sets.append(first_set)
-                st.session_state.next_set_error = "✅ 题组准备完毕"
-        except Exception as e:
-            st.session_state.next_set_error = f"题组生成异常: {str(e)}"
-        
         status_container.empty()
+
+        # 启动后台生成第一组题（偷偷进行，用户无感知）
+        ensure_next_set_async(
+            api_key, 
+            st.session_state.review_pack, 
+            st.session_state.study_mode
+        )
 
         # 重置生成状态
         st.session_state.run_generation = False
