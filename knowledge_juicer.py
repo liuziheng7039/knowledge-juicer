@@ -105,6 +105,8 @@ UI = {
     # 简答题输入
     "TEXTAREA_LABEL": "请输入你的答案：",
     "TEXTAREA_PLACEHOLDER": "简答/论述：写要点即可，越结构化越好。",
+    "TEXTAREA_PLACEHOLDER_SHORT": "简答题建议格式：\n1. 先写核心定义（1-2句）\n2. 再补充关键区别或特征\n3. 最后举一个例子（如有）",
+    "TEXTAREA_PLACEHOLDER_ESSAY": "论述题建议格式：\n1. 开头：明确你的观点/论点\n2. 主体：分2-3个要点展开，每个要点给论据\n3. 总结：回扣题目，简短收尾",
     "SUBMIT_BTN": "✅ 提交答案",
     "NEED_INPUT": "请先输入答案。",
 
@@ -113,6 +115,14 @@ UI = {
 
     # 上传提示
     "UPLOAD_TIP": "把 PDF 拖到下面区域，或点击浏览按钮上传。",
+
+    # 错误提示（用户友好版）
+    "ERR_SYS_001": "请先配置 API Key 才能使用此功能。在侧边栏顶部输入你的 DashScope API Key。",
+    "ERR_PDF_EXT_001": "未能从 PDF 中提取到足够内容。请检查：\n1. PDF 是否为空白页？\n2. 是否为纯图片扫描件？\n\n建议用文字版课件重试。",
+    "ERR_KC_GEN_001": "AI 生成知识清单时出错，请检查网络连接后重试。",
+    "ERR_KC_GEN_002": "AI 返回的内容格式异常，请重新点击「开始学习」再试一次。",
+    "ERR_KC_GEN_003": "知识清单数据不完整，请重新生成。",
+    "ERR_QS_GEN": "题目生成暂时失败，请稍后再点「考考我」。",
 }
 
 # =========================================================
@@ -142,6 +152,13 @@ st.markdown("""
     
     .success-banner {
         animation: fadeInScale 0.5s ease-out;
+    }
+
+    /* 错题循环阶段样式 */
+    .remedial-phase {
+        border-left: 4px solid #ff9800;
+        padding-left: 12px;
+        margin-bottom: 8px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -188,6 +205,14 @@ def init_state():
     # 学习模式（0基础 / 高玩）
     if "study_mode" not in st.session_state:
         st.session_state.study_mode = UI["MODE_BEGINNER"]
+
+    # 缓存生成的 Word 文档
+    if "docx_bytes" not in st.session_state:
+        st.session_state.docx_bytes = None
+
+    # 是否显示刷题总结
+    if "show_quiz_summary" not in st.session_state:
+        st.session_state.show_quiz_summary = False
 
     # 刷题状态机
     if "quiz" not in st.session_state:
@@ -782,6 +807,7 @@ def quiz_reset():
 
 def quiz_start_with_set(question_set: dict):
     """开始一组新题"""
+    st.session_state.show_quiz_summary = False
     quiz_reset()
     st.session_state.quiz["active"] = True
     st.session_state.quiz["phase"] = "main"
@@ -849,10 +875,12 @@ def move_to_next_question_or_phase():
                 qz["idx"] = 0
                 qz["questions"] = []
             else:
+                st.session_state.show_quiz_summary = True
                 qz["active"] = False
     else:
         build_remedial_queue()
         if not qz["remedial_queue"]:
+            st.session_state.show_quiz_summary = True
             qz["active"] = False
 
 
@@ -862,6 +890,31 @@ def get_concept_snippet(concept_id: str, review_pack: dict) -> str:
         if c.get("id") == concept_id:
             return f"**{c.get('title','')}**：{c.get('explain','')}"
     return ""
+
+
+def render_quiz_summary():
+    """渲染刷题完成后的统计总结"""
+    qz = st.session_state.quiz
+    total = len(qz.get("questions", []))
+    mastery = qz.get("concept_mastery", {})
+    wrong = qz.get("wrong_concepts", {})
+
+    correct_count = sum(1 for v in mastery.values() if v is True)
+    total_concepts = len(mastery)
+    stuck = [cid for cid, m in wrong.items() if m.get("stuck")]
+
+    st.markdown("### 📊 本轮刷题总结")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("总题数", total)
+    c2.metric("掌握考点", f"{correct_count}/{total_concepts}" if total_concepts else "0")
+    c3.metric("需回看", len(stuck))
+
+    if stuck:
+        st.markdown("**建议回看的考点：**")
+        for cid in stuck:
+            snippet = get_concept_snippet(cid, st.session_state.review_pack)
+            if snippet:
+                st.markdown(f"- {snippet}")
 
 
 # =========================================================
@@ -879,63 +932,64 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # 工具箱（只在生成知识清单后显示）
+    # 当前课程信息（生成后显示在顶部）
     if st.session_state.review_pack:
+        mode_label = "🟢 0基础模式" if is_beginner_mode(st.session_state.study_mode) else "🔴 高玩模式"
+        st.markdown(f"**当前课程：** {st.session_state.course_name}")
+        st.markdown(f"**学习模式：** {mode_label}")
+        st.markdown("---")
+
+        # 工具箱
         st.markdown(UI["TOOLBOX"])
 
         # 考考我按钮
         quiz_btn_clicked = st.button(UI["QUIZ_BTN"], use_container_width=True)
-        
+
         if quiz_btn_clicked:
             if not api_key:
-                st.error("ERROR_CODE: SYS_001 - 系统配置缺失")
+                st.error(UI["ERR_SYS_001"])
             elif not st.session_state.question_sets:
-                # 有错误信息：显示错误码
                 if st.session_state.next_set_error:
-                    st.error(f"ERROR_CODE: {st.session_state.next_set_error}")
+                    st.error(UI["ERR_QS_GEN"])
                 else:
-                    # 不太可能，但保险起见
                     st.warning("😅 题目还在准备中，请稍等片刻再试")
             else:
-                # 有题了，开始刷题
                 qs = st.session_state.question_sets.pop(0)
                 quiz_start_with_set(qs)
                 st.rerun()
 
-        # 下载按钮
-        docx_file = generate_word_file_from_markdown(
-            st.session_state.course_name,
-            st.session_state.result_content
-        )
-        st.download_button(
-            label=UI["DOWNLOAD_BTN"],
-            data=docx_file,
-            file_name=f"{st.session_state.course_name}_知识清单.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            use_container_width=True
-        )
+        # 下载按钮（使用缓存的 DOCX）
+        if st.session_state.docx_bytes:
+            st.download_button(
+                label=UI["DOWNLOAD_BTN"],
+                data=st.session_state.docx_bytes,
+                file_name=f"{st.session_state.course_name}_知识清单.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                use_container_width=True
+            )
 
         st.markdown("---")
 
-    # 设置区域
-    st.markdown(UI["SETTINGS"])
-    mode = st.radio(UI["GOAL"], (UI["MODE_BEGINNER"], UI["MODE_PRO"]), index=0)
-    st.session_state.study_mode = mode
+    # 设置区域（生成后自动折叠）
+    _settings_expanded = st.session_state.review_pack is None
+    with st.expander("⚙️ 复习设置", expanded=_settings_expanded):
+        mode = st.radio(UI["GOAL"], (UI["MODE_BEGINNER"], UI["MODE_PRO"]), index=0)
+        st.session_state.study_mode = mode
 
-    st.caption(UI["UPLOAD_TIP"])
-    uploaded_files = st.file_uploader(UI["UPLOAD_MAIN"], type=["pdf"], accept_multiple_files=True)
+        st.caption(UI["UPLOAD_TIP"])
+        uploaded_files = st.file_uploader(UI["UPLOAD_MAIN"], type=["pdf"], accept_multiple_files=True)
 
-    st.caption(UI["UPLOAD_TIP"])
-    uploaded_exams = st.file_uploader(UI["UPLOAD_EXAM"], type=["pdf"], key="exam")
+        st.caption(UI["UPLOAD_TIP"])
+        uploaded_exams = st.file_uploader(UI["UPLOAD_EXAM"], type=["pdf"], key="exam")
 
-    # 开始学习按钮
-    start_clicked = st.button(
-        UI["START_BTN"],
-        type="primary",
-        use_container_width=True,
-        disabled=st.session_state.is_generating or (st.session_state.review_pack is not None),
-        key="start_learning_btn"
-    )
+        # 开始学习按钮
+        start_clicked = st.button(
+            UI["START_BTN"],
+            type="primary",
+            use_container_width=True,
+            disabled=st.session_state.is_generating or (st.session_state.review_pack is not None),
+            key="start_learning_btn"
+        )
 
 
 # =========================================================
@@ -988,7 +1042,7 @@ if st.session_state.run_generation:
             st.session_state.is_generating = False
             progress_container.empty()
             status_container.empty()
-            st.error("ERROR_CODE: PDF_EXT_001 - 未能从 PDF 中提取到足够内容")
+            st.error(UI["ERR_PDF_EXT_001"])
             st.stop()
 
         # 提取真题文字（如果有）
@@ -1038,7 +1092,9 @@ if st.session_state.run_generation:
             st.session_state.is_generating = False
             progress_container.empty()
             status_container.empty()
-            st.error(f"ERROR_CODE: KC_GEN_001 - {err}")
+            st.error(UI["ERR_KC_GEN_001"])
+            with st.expander("技术详情"):
+                st.code(f"KC_GEN_001: {err}")
             st.stop()
 
         # 解析 JSON
@@ -1048,7 +1104,7 @@ if st.session_state.run_generation:
             st.session_state.is_generating = False
             progress_container.empty()
             status_container.empty()
-            st.error(f"ERROR_CODE: KC_GEN_002 - 无法解析 AI 返回的 JSON")
+            st.error(UI["ERR_KC_GEN_002"])
             st.stop()
 
         # 后处理（计算评分、排序）
@@ -1058,13 +1114,18 @@ if st.session_state.run_generation:
             st.session_state.is_generating = False
             progress_container.empty()
             status_container.empty()
-            st.error(f"ERROR_CODE: KC_GEN_003 - {post_err}")
+            st.error(UI["ERR_KC_GEN_003"])
+            with st.expander("技术详情"):
+                st.code(f"KC_GEN_003: {post_err}")
             st.stop()
 
         # 保存知识清单到状态
         st.session_state.review_pack = pack
         st.session_state.course_name = pack.get("course_name", "通用课程")
         st.session_state.result_content = concepts_to_markdown(pack)
+        st.session_state.docx_bytes = generate_word_file_from_markdown(
+            pack.get("course_name", "通用课程"), concepts_to_markdown(pack)
+        )
 
         # ========================================
         # 阶段2：偷偷生成第一组题 (70-100%)
@@ -1081,8 +1142,8 @@ if st.session_state.run_generation:
         
         # 根据实际耗时调整进度条速度
         if stage2_duration < 3:
-            # 太快了，强制延迟到 3 秒让进度条看起来真实
-            remaining_time = 3 - stage2_duration
+            # 太快了，强制延迟到 1.5 秒让进度条看起来真实
+            remaining_time = 1.5 - stage2_duration
             steps = 30  # 从 70% 到 100%
             delay_per_step = remaining_time / steps
         else:
@@ -1206,13 +1267,16 @@ if st.session_state.review_pack:
                         st.session_state.question_sets.append(next_set)
                         st.session_state.next_set_error = ""
                     
-                    # 确保至少显示 3 秒，让用户感觉在认真整理
-                    time.sleep(max(0, 3))
+                    # 确保至少显示 1.5 秒
+                    time.sleep(max(0, 1.5))
                 
                 # 整理完毕，继续刷题
                 st.rerun()
 
             if not qz["active"]:
+                if st.session_state.show_quiz_summary:
+                    render_quiz_summary()
+                    st.markdown("---")
                 st.info(UI["QUIZ_HINT"])
             else:
                 # 错题循环阶段
@@ -1220,6 +1284,7 @@ if st.session_state.review_pack:
                     cid = qz["remedial_queue"][0] if qz["remedial_queue"] else None
                     if not cid:
                         st.success(UI["REMEDIAL_DONE"])
+                        st.session_state.show_quiz_summary = True
                         qz["active"] = False
                         st.rerun()
 
@@ -1239,6 +1304,7 @@ if st.session_state.review_pack:
                         build_remedial_queue()
                         if not qz["remedial_queue"]:
                             st.success(UI["REMEDIAL_END"])
+                            st.session_state.show_quiz_summary = True
                             qz["active"] = False
                             st.rerun()
                         else:
@@ -1262,19 +1328,21 @@ if st.session_state.review_pack:
                         st.session_state.remedial_current_cid = cid
 
                     current_q = st.session_state.remedial_current_q
+                    st.markdown('<div class="remedial-phase">', unsafe_allow_html=True)
                     st.markdown(UI["REMEDIAL_TITLE"])
-                    st.caption(UI["REMEDIAL_META"].format(
-                        title=current_q.get("concept_title", ""),
-                        n=meta.get("attempts", 0)
-                    ))
+                    st.warning(f"🔁 考点：{current_q.get('concept_title', '')} ｜ 第 {meta.get('attempts', 0)}/4 次尝试")
+                    st.markdown('</div>', unsafe_allow_html=True)
 
                 # 主卷阶段
                 else:
                     current_q = quiz_current_question()
                     st.markdown(UI["QUIZ_TITLE"])
+                    quiz_total = len(qz["questions"])
+                    if quiz_total > 0:
+                        st.progress(qz["idx"] / quiz_total)
                     st.caption(UI["QUIZ_PROGRESS"].format(
                         cur=qz["idx"] + 1,
-                        total=len(qz["questions"]),
+                        total=quiz_total,
                         set_id=qz.get("current_set_id")
                     ))
                     st.caption(UI["QUIZ_CONCEPT"].format(title=current_q.get("concept_title", "")))
@@ -1282,15 +1350,19 @@ if st.session_state.review_pack:
                 # 显示题目
                 st.markdown(f"{UI['QUIZ_STEM']} {current_q.get('stem', '')}")
 
-                # 显示上一题的批改结果
+                # 显示上一题的批改结果（颜色编码）
                 if qz["last_feedback"]:
-                    st.markdown("---")
-                    st.markdown(qz["last_feedback"])
-                    st.markdown("---")
+                    fb = qz["last_feedback"]
+                    if "✅" in fb:
+                        st.success(fb)
+                    elif "❌" in fb:
+                        st.error(fb)
+                    else:
+                        st.info(fb)
 
                 # 如果等待下一题，显示按钮
                 if qz["await_next"]:
-                    if st.button(UI["NEXT_BTN"], use_container_width=True):
+                    if st.button(UI["NEXT_BTN"], use_container_width=True, type="primary"):
                         if qz["phase"] == "remedial":
                             if "remedial_current_q" in st.session_state:
                                 del st.session_state.remedial_current_q
@@ -1338,31 +1410,21 @@ if st.session_state.review_pack:
                 # 根据题型显示不同的答题界面
                 qtype = current_q.get("type", "single")
                 
-                # 单选题：ABCD 按钮
+                # 单选题：ABCD 按钮（垂直排列）
                 if qtype == "single":
                     opts = current_q.get("options", {}) or {}
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        if st.button(f"A. {opts.get('A','')}", use_container_width=True):
-                            submit_answer("A")
-                            st.rerun()
-                        if st.button(f"C. {opts.get('C','')}", use_container_width=True):
-                            submit_answer("C")
-                            st.rerun()
-                    with c2:
-                        if st.button(f"B. {opts.get('B','')}", use_container_width=True):
-                            submit_answer("B")
-                            st.rerun()
-                        if st.button(f"D. {opts.get('D','')}", use_container_width=True):
-                            submit_answer("D")
+                    for key in ["A", "B", "C", "D"]:
+                        if st.button(f"{key}. {opts.get(key, '')}", use_container_width=True, key=f"opt_{key}"):
+                            submit_answer(key)
                             st.rerun()
                 
                 # 简答/论述题：文本框
                 else:
+                    ph = UI["TEXTAREA_PLACEHOLDER_ESSAY"] if qtype == "essay" else UI["TEXTAREA_PLACEHOLDER_SHORT"]
                     user_text = st.text_area(
                         UI["TEXTAREA_LABEL"],
-                        height=120,
-                        placeholder=UI["TEXTAREA_PLACEHOLDER"]
+                        height=150 if qtype == "essay" else 120,
+                        placeholder=ph
                     )
                     if st.button(UI["SUBMIT_BTN"], use_container_width=True):
                         if not user_text.strip():
