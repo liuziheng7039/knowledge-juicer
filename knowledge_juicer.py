@@ -120,28 +120,352 @@ UI = {
 # =========================================================
 st.set_page_config(page_title=UI["PAGE_TITLE"], page_icon="🍋", layout="wide")
 
-# 自定义 CSS 样式 - 让进度条更美观
+# 自定义 CSS 样式 - 全面美化界面
 st.markdown("""
 <style>
-    /* 进度条样式优化 */
+    /* ===== 全局背景 ===== */
+    .stApp {
+        background: linear-gradient(160deg, #f8f9fc 0%, #eef1f8 100%);
+    }
+
+    /* ===== 隐藏默认元素，更简洁 ===== */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+
+    /* ===== 侧边栏 ===== */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #1e1e2f 0%, #1a1a3e 50%, #12234d 100%) !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stMarkdown"],
+    [data-testid="stSidebar"] label,
+    [data-testid="stSidebar"] .stRadio label,
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] span,
+    [data-testid="stSidebar"] .stCaption {
+        color: #c8cfe0 !important;
+    }
+    [data-testid="stSidebar"] h1,
+    [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3 {
+        color: #ffffff !important;
+    }
+    [data-testid="stSidebar"] hr {
+        border-color: rgba(255,255,255,0.1) !important;
+    }
+    [data-testid="stSidebar"] .stButton > button {
+        background: linear-gradient(135deg, #6c63ff 0%, #8b5cf6 100%) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 12px !important;
+        padding: 0.6rem 1.2rem !important;
+        font-weight: 600 !important;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        box-shadow: 0 4px 14px rgba(108, 99, 255, 0.35) !important;
+    }
+    [data-testid="stSidebar"] .stButton > button:hover {
+        transform: translateY(-2px) !important;
+        box-shadow: 0 6px 20px rgba(108, 99, 255, 0.5) !important;
+    }
+    [data-testid="stSidebar"] .stDownloadButton > button {
+        background: linear-gradient(135deg, #34d399 0%, #06b6d4 100%) !important;
+        color: #fff !important;
+        border: none !important;
+        border-radius: 12px !important;
+        font-weight: 600 !important;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        box-shadow: 0 4px 14px rgba(52, 211, 153, 0.35) !important;
+    }
+    [data-testid="stSidebar"] .stDownloadButton > button:hover {
+        transform: translateY(-2px) !important;
+        box-shadow: 0 6px 20px rgba(52, 211, 153, 0.5) !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stFileUploader"] {
+        border: 2px dashed rgba(108, 99, 255, 0.4) !important;
+        border-radius: 12px !important;
+        background: rgba(255,255,255,0.03) !important;
+        transition: border-color 0.3s ease !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stFileUploader"]:hover {
+        border-color: rgba(108, 99, 255, 0.7) !important;
+    }
+
+    /* ===== 进度条 ===== */
     .stProgress > div > div > div > div {
-        background: linear-gradient(90deg, #00C9FF 0%, #92FE9D 100%);
+        background: linear-gradient(90deg, #6c63ff 0%, #8b5cf6 40%, #a78bfa 70%, #c4b5fd 100%) !important;
+        border-radius: 10px;
     }
-    
-    /* 成功提示动画 */
+
+    /* ===== 主区域标题 ===== */
+    .main-hero-title {
+        font-size: 2.2rem;
+        font-weight: 800;
+        background: linear-gradient(135deg, #6c63ff, #8b5cf6, #a855f7);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        margin-bottom: 0.2rem;
+        letter-spacing: -0.5px;
+    }
+    .main-hero-sub {
+        font-size: 1rem;
+        color: #8892a4;
+        margin-bottom: 1.5rem;
+    }
+
+    /* ===== 成功提示动画 ===== */
     @keyframes fadeInScale {
-        0% {
-            opacity: 0;
-            transform: scale(0.8);
-        }
-        100% {
-            opacity: 1;
-            transform: scale(1);
-        }
+        0% { opacity: 0; transform: scale(0.8); }
+        100% { opacity: 1; transform: scale(1); }
     }
-    
     .success-banner {
         animation: fadeInScale 0.5s ease-out;
+    }
+
+    /* ===== 知识卡片 ===== */
+    .kc-card {
+        background: #ffffff;
+        border-radius: 14px;
+        padding: 1.2rem 1.4rem;
+        margin-bottom: 0.85rem;
+        box-shadow: 0 1px 8px rgba(108, 99, 255, 0.06), 0 1px 3px rgba(0,0,0,0.04);
+        border-left: 4px solid #6c63ff;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .kc-card:hover {
+        transform: translateX(4px);
+        box-shadow: 0 4px 20px rgba(108, 99, 255, 0.12), 0 2px 6px rgba(0,0,0,0.06);
+    }
+    .kc-card.star {
+        border-left-color: #f472b6;
+        background: linear-gradient(135deg, #ffffff 0%, #fdf2f8 100%);
+    }
+    .kc-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.5rem;
+        gap: 0.8rem;
+    }
+    .kc-title {
+        font-size: 1rem;
+        font-weight: 700;
+        color: #1e1e2f;
+        margin: 0;
+        flex: 1;
+        line-height: 1.4;
+    }
+    .kc-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 3px 10px;
+        border-radius: 20px;
+        font-size: 0.72rem;
+        font-weight: 700;
+        color: white;
+        white-space: nowrap;
+        flex-shrink: 0;
+    }
+    .kc-badge.hot { background: linear-gradient(135deg, #f472b6, #ef4444); }
+    .kc-badge.warm { background: linear-gradient(135deg, #8b5cf6, #6c63ff); }
+    .kc-badge.cool { background: linear-gradient(135deg, #60a5fa, #3b82f6); }
+    .kc-explain {
+        font-size: 0.88rem;
+        color: #4b5563;
+        line-height: 1.7;
+        margin-bottom: 0.3rem;
+    }
+    .kc-explain .lbl {
+        color: #6c63ff;
+        font-weight: 600;
+        font-size: 0.82rem;
+    }
+    .kc-example {
+        background: #f5f3ff;
+        border-radius: 8px;
+        padding: 0.5rem 0.8rem;
+        margin-top: 0.35rem;
+        font-size: 0.84rem;
+        color: #6b7280;
+        line-height: 1.6;
+        border: 1px solid #ede9fe;
+    }
+
+    /* ===== 欢迎页 ===== */
+    .welcome-container {
+        text-align: center;
+        padding: 3rem 2rem;
+        background: #ffffff;
+        border-radius: 20px;
+        box-shadow: 0 2px 20px rgba(108, 99, 255, 0.06);
+        margin-top: 2rem;
+        max-width: 700px;
+        margin-left: auto;
+        margin-right: auto;
+    }
+    .welcome-icon {
+        font-size: 3.5rem;
+        margin-bottom: 0.8rem;
+    }
+    .welcome-title {
+        font-size: 1.6rem;
+        font-weight: 700;
+        color: #1e1e2f;
+        margin-bottom: 0.5rem;
+    }
+    .welcome-desc {
+        font-size: 0.95rem;
+        color: #6b7280;
+        line-height: 1.7;
+        margin-bottom: 2rem;
+    }
+    .welcome-steps {
+        display: flex;
+        justify-content: center;
+        gap: 1.5rem;
+        flex-wrap: wrap;
+    }
+    .w-step {
+        text-align: center;
+        padding: 1rem;
+        min-width: 120px;
+        background: #f8f7ff;
+        border-radius: 14px;
+        transition: all 0.3s ease;
+    }
+    .w-step:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 4px 12px rgba(108, 99, 255, 0.1);
+    }
+    .w-step-icon { font-size: 2rem; margin-bottom: 0.3rem; }
+    .w-step-num {
+        display: inline-block;
+        width: 24px; height: 24px; line-height: 24px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #6c63ff, #8b5cf6);
+        color: white; font-size: 0.75rem; font-weight: 700;
+        margin-bottom: 0.3rem;
+    }
+    .w-step-text { font-size: 0.82rem; color: #4b5563; }
+
+    /* ===== 刷题区域 ===== */
+    .quiz-container {
+        background: #ffffff;
+        border-radius: 16px;
+        padding: 1.5rem;
+        box-shadow: 0 1px 8px rgba(0,0,0,0.04);
+    }
+    .quiz-meta {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 0.8rem;
+        flex-wrap: wrap;
+    }
+    .quiz-tag {
+        display: inline-block;
+        padding: 3px 10px;
+        border-radius: 6px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+    .quiz-tag.progress-tag {
+        background: #ede9fe; color: #6c63ff;
+    }
+    .quiz-tag.concept-tag {
+        background: #fce7f3; color: #db2777;
+    }
+    .quiz-stem-text {
+        font-size: 1rem;
+        font-weight: 600;
+        color: #1e1e2f;
+        line-height: 1.7;
+        margin: 0.8rem 0 1rem 0;
+        padding: 0.8rem 1rem;
+        background: #f8f7ff;
+        border-radius: 10px;
+        border: 1px solid #ede9fe;
+    }
+
+    /* ===== 反馈卡片 ===== */
+    .feedback-card {
+        border-radius: 12px;
+        padding: 1rem 1.2rem;
+        margin: 0.8rem 0;
+        line-height: 1.7;
+        font-size: 0.92rem;
+    }
+    .feedback-card.correct {
+        background: linear-gradient(135deg, #ecfdf5, #d1fae5);
+        border: 1px solid #6ee7b7;
+        color: #065f46;
+    }
+    .feedback-card.wrong {
+        background: linear-gradient(135deg, #fef2f2, #fee2e2);
+        border: 1px solid #fca5a5;
+        color: #991b1b;
+    }
+
+    /* ===== 主区域按钮 ===== */
+    .stButton > button {
+        border-radius: 10px !important;
+        font-weight: 500 !important;
+        transition: all 0.2s ease !important;
+    }
+    .stButton > button:hover {
+        transform: translateY(-1px) !important;
+    }
+
+    /* ===== Tab / Radio 选择器美化 ===== */
+    .stRadio > div[role="radiogroup"] {
+        gap: 0 !important;
+        background: #f1f0fb;
+        border-radius: 10px;
+        padding: 3px;
+    }
+    .stRadio > div[role="radiogroup"] > label {
+        border-radius: 8px !important;
+        padding: 0.4rem 1rem !important;
+        font-weight: 500 !important;
+        transition: all 0.2s ease !important;
+    }
+
+    /* ===== 成功提示条 ===== */
+    .gen-success-bar {
+        background: linear-gradient(135deg, #6c63ff 0%, #8b5cf6 100%);
+        color: white;
+        padding: 0.8rem 1.2rem;
+        border-radius: 12px;
+        font-weight: 600;
+        font-size: 0.92rem;
+        box-shadow: 0 4px 14px rgba(108, 99, 255, 0.25);
+        margin-bottom: 1rem;
+    }
+
+    /* ===== 聊天消息 ===== */
+    [data-testid="stChatMessage"] {
+        border-radius: 14px !important;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.03) !important;
+    }
+
+    /* ===== 分隔线 ===== */
+    .section-divider {
+        border: none;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(108, 99, 255, 0.15), transparent);
+        margin: 1.2rem 0;
+    }
+
+    /* ===== 错题循环标题 ===== */
+    .remedial-header {
+        background: linear-gradient(135deg, #fef3c7, #fde68a);
+        border: 1px solid #fbbf24;
+        border-radius: 10px;
+        padding: 0.6rem 1rem;
+        font-weight: 600;
+        color: #92400e;
+        font-size: 0.92rem;
+        margin-bottom: 0.8rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -313,6 +637,55 @@ def concepts_to_markdown(pack: dict) -> str:
             lines.append(f"{UI['MD_EXAMPLE']}{example}")
         lines.append("")
     return "\n".join(lines)
+
+
+def concepts_to_html_cards(pack: dict) -> str:
+    """
+    把结构化的知识清单渲染为 HTML 卡片
+    用于在页面上美观展示
+    """
+    if not pack or "concepts" not in pack:
+        return ""
+
+    html_parts = []
+    for c in pack["concepts"]:
+        title = c.get("title", "未命名考点")
+        explain = c.get("explain", "")
+        example = c.get("example", "")
+        score = c.get("final_score", c.get("model_score", 0))
+        is_star = c.get("is_star", False)
+
+        # 根据分数选择徽章颜色
+        if score >= 80:
+            badge_cls = "hot"
+        elif score >= 50:
+            badge_cls = "warm"
+        else:
+            badge_cls = "cool"
+
+        card_cls = "kc-card star" if is_star else "kc-card"
+        star_icon = "&#11088; " if is_star else ""
+
+        explain_html = ""
+        if explain:
+            explain_html = f'<div class="kc-explain"><span class="lbl">解释：</span>{explain}</div>'
+
+        example_html = ""
+        if example:
+            example_html = f'<div class="kc-example">&#128161; 例子：{example}</div>'
+
+        html_parts.append(f"""
+        <div class="{card_cls}">
+            <div class="kc-header">
+                <div class="kc-title">{star_icon}{title}</div>
+                <span class="kc-badge {badge_cls}">{score} 分</span>
+            </div>
+            {explain_html}
+            {example_html}
+        </div>
+        """)
+
+    return "\n".join(html_parts)
 
 
 def is_beginner_mode(mode_str: str) -> bool:
@@ -877,7 +1250,7 @@ with st.sidebar:
     else:
         api_key = st.text_input("API Key", type="password")
 
-    st.markdown("---")
+    st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 
     # 工具箱（只在生成知识清单后显示）
     if st.session_state.review_pack:
@@ -915,7 +1288,7 @@ with st.sidebar:
             use_container_width=True
         )
 
-        st.markdown("---")
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 
     # 设置区域
     st.markdown(UI["SETTINGS"])
@@ -941,7 +1314,8 @@ with st.sidebar:
 # =========================================================
 # 主界面
 # =========================================================
-st.title(UI["MAIN_TITLE"])
+st.markdown(f'<div class="main-hero-title">{UI["MAIN_TITLE"]}</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-hero-sub">上传课件，AI 自动提取核心考点 / 生成高频题库 / 智能答疑</div>', unsafe_allow_html=True)
 
 # 进度显示占位符
 progress_container = st.empty()
@@ -1139,16 +1513,22 @@ if st.session_state.run_generation:
 # 内容展示区域
 # =========================================================
 if st.session_state.review_pack:
-    # 成功提示
-    st.success(UI["GEN_SUCCESS"].format(course_name=st.session_state.course_name))
+    # 成功提示 - 使用自定义样式
+    n_concepts = len(st.session_state.review_pack.get("concepts", []))
+    st.markdown(
+        f'<div class="gen-success-bar">&#10004;&#65039; 《{st.session_state.course_name}》知识清单已生成'
+        f'（共 {n_concepts} 个核心考点）&nbsp;&mdash;&nbsp;侧边栏可下载 / 考考我</div>',
+        unsafe_allow_html=True
+    )
 
     # 分两栏显示
     col1, col2 = st.columns([6, 4])
 
-    # 左栏：知识清单
+    # 左栏：知识清单（HTML卡片）
     with col1:
         st.subheader(UI["LEFT_HEADER"])
-        st.markdown(st.session_state.result_content)
+        cards_html = concepts_to_html_cards(st.session_state.review_pack)
+        st.markdown(cards_html, unsafe_allow_html=True)
 
     # 右栏：答疑 / 刷题
     with col2:
@@ -1262,31 +1642,65 @@ if st.session_state.review_pack:
                         st.session_state.remedial_current_cid = cid
 
                     current_q = st.session_state.remedial_current_q
-                    st.markdown(UI["REMEDIAL_TITLE"])
-                    st.caption(UI["REMEDIAL_META"].format(
-                        title=current_q.get("concept_title", ""),
-                        n=meta.get("attempts", 0)
-                    ))
+                    st.markdown(
+                        f'<div class="remedial-header">&#128260; 错题循环 &mdash; 直到掌握</div>',
+                        unsafe_allow_html=True
+                    )
+                    st.markdown(
+                        f'<div class="quiz-meta">'
+                        f'<span class="quiz-tag concept-tag">{current_q.get("concept_title", "")}</span>'
+                        f'<span class="quiz-tag progress-tag">已错 {meta.get("attempts", 0)}/4 次</span>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
 
                 # 主卷阶段
                 else:
                     current_q = quiz_current_question()
-                    st.markdown(UI["QUIZ_TITLE"])
-                    st.caption(UI["QUIZ_PROGRESS"].format(
-                        cur=qz["idx"] + 1,
-                        total=len(qz["questions"]),
-                        set_id=qz.get("current_set_id")
-                    ))
-                    st.caption(UI["QUIZ_CONCEPT"].format(title=current_q.get("concept_title", "")))
+                    cur_idx = qz["idx"] + 1
+                    total_q = len(qz["questions"])
+                    # 进度点
+                    dots_html = ""
+                    for di in range(total_q):
+                        if di < cur_idx - 1:
+                            dots_html += '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#34d399;margin:0 2px;"></span>'
+                        elif di == cur_idx - 1:
+                            dots_html += '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:linear-gradient(135deg,#6c63ff,#8b5cf6);margin:0 2px;"></span>'
+                        else:
+                            dots_html += '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#e5e7eb;margin:0 2px;"></span>'
 
-                # 显示题目
-                st.markdown(f"{UI['QUIZ_STEM']} {current_q.get('stem', '')}")
+                    st.markdown(f"### &#128221; 高频卷（{total_q}题）")
+                    st.markdown(
+                        f'<div class="quiz-meta">'
+                        f'<span class="quiz-tag progress-tag">第 {cur_idx}/{total_q} 题</span>'
+                        f'<span class="quiz-tag concept-tag">{current_q.get("concept_title", "")}</span>'
+                        f'</div>'
+                        f'<div style="margin-bottom:0.8rem;">{dots_html}</div>',
+                        unsafe_allow_html=True
+                    )
 
-                # 显示上一题的批改结果
+                # 显示题目 - 使用卡片样式
+                st.markdown(
+                    f'<div class="quiz-stem-text">{current_q.get("stem", "")}</div>',
+                    unsafe_allow_html=True
+                )
+
+                # 显示上一题的批改结果 - 使用反馈卡片
                 if qz["last_feedback"]:
-                    st.markdown("---")
-                    st.markdown(qz["last_feedback"])
-                    st.markdown("---")
+                    feedback_text = qz["last_feedback"]
+                    feedback_html = feedback_text.replace("\n\n", "<br>").replace("\n", "<br>")
+                    if feedback_text.startswith(UI["CORRECT"]):
+                        st.markdown(
+                            f'<div class="feedback-card correct">{feedback_html}</div>',
+                            unsafe_allow_html=True
+                        )
+                    elif feedback_text.startswith(UI["WRONG"]):
+                        st.markdown(
+                            f'<div class="feedback-card wrong">{feedback_html}</div>',
+                            unsafe_allow_html=True
+                        )
+                    else:
+                        st.markdown(feedback_text)
 
                 # 如果等待下一题，显示按钮
                 if qz["await_next"]:
@@ -1372,6 +1786,37 @@ if st.session_state.review_pack:
                             st.rerun()
 
 else:
-    # 未生成知识清单时的提示
+    # 未生成知识清单时显示欢迎页
     if not st.session_state.is_generating and not st.session_state.run_generation:
-        st.info(UI["EMPTY_HINT"])
+        st.markdown("""
+        <div class="welcome-container">
+            <div class="welcome-icon">&#127819;</div>
+            <div class="welcome-title">把课件扔进来，知识榨出来</div>
+            <div class="welcome-desc">
+                上传 PDF 课件，AI 帮你提炼核心考点、生成练习题、智能答疑<br>
+                期末复习不再迷茫，高效拿分
+            </div>
+            <div class="welcome-steps">
+                <div class="w-step">
+                    <div class="w-step-icon">&#128196;</div>
+                    <div class="w-step-num">1</div>
+                    <div class="w-step-text">上传课件 PDF</div>
+                </div>
+                <div class="w-step">
+                    <div class="w-step-icon">&#9889;</div>
+                    <div class="w-step-num">2</div>
+                    <div class="w-step-text">AI 自动提取考点</div>
+                </div>
+                <div class="w-step">
+                    <div class="w-step-icon">&#128221;</div>
+                    <div class="w-step-num">3</div>
+                    <div class="w-step-text">刷题 + 答疑</div>
+                </div>
+                <div class="w-step">
+                    <div class="w-step-icon">&#127942;</div>
+                    <div class="w-step-num">4</div>
+                    <div class="w-step-text">轻松应对考试</div>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
