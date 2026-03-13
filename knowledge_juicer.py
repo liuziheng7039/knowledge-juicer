@@ -160,6 +160,50 @@ st.markdown("""
         padding-left: 12px;
         margin-bottom: 8px;
     }
+
+    /* 侧边栏：提升文字与背景对比度 */
+    [data-testid="stSidebar"] {
+        background-color: #0E1525;
+    }
+    [data-testid="stSidebar"] * {
+        color: #E8ECF1 !important;
+    }
+    [data-testid="stSidebar"] .stMarkdown p,
+    [data-testid="stSidebar"] .stMarkdown li,
+    [data-testid="stSidebar"] .stMarkdown span,
+    [data-testid="stSidebar"] .stMarkdown h1,
+    [data-testid="stSidebar"] .stMarkdown h2,
+    [data-testid="stSidebar"] .stMarkdown h3,
+    [data-testid="stSidebar"] label,
+    [data-testid="stSidebar"] .stRadio label,
+    [data-testid="stSidebar"] .stCaption {
+        color: #E8ECF1 !important;
+    }
+    [data-testid="stSidebar"] .stMarkdown strong {
+        color: #FFFFFF !important;
+    }
+    /* 侧边栏按钮样式 */
+    [data-testid="stSidebar"] .stButton > button {
+        color: #FFFFFF !important;
+        border-color: rgba(255, 255, 255, 0.2);
+    }
+    [data-testid="stSidebar"] .stDownloadButton > button {
+        color: #FFFFFF !important;
+        border-color: rgba(255, 255, 255, 0.2);
+    }
+    /* 侧边栏输入框 */
+    [data-testid="stSidebar"] input {
+        color: #FFFFFF !important;
+        background-color: rgba(255, 255, 255, 0.08) !important;
+    }
+    /* 侧边栏分割线 */
+    [data-testid="stSidebar"] hr {
+        border-color: rgba(255, 255, 255, 0.15) !important;
+    }
+    /* 侧边栏 expander */
+    [data-testid="stSidebar"] .streamlit-expanderHeader {
+        color: #E8ECF1 !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
